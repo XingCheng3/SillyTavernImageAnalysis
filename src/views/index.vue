@@ -119,6 +119,12 @@
 
             <!-- 导出按钮区域 -->
             <div class="export-section">
+                <div class="snapshot-actions">
+                    <button @click="saveManualSnapshot" class="snapshot-button">保存快照</button>
+                    <button @click="undoLastSnapshot" class="snapshot-button secondary" :disabled="!canUndoSnapshot">撤销</button>
+                    <button @click="restoreInitialSnapshot" class="snapshot-button secondary" :disabled="!canRestoreInitialSnapshot">恢复初始</button>
+                </div>
+                <div v-if="snapshotMeta.currentLabel" class="snapshot-tip">当前快照：{{ snapshotMeta.currentLabel }}</div>
                 <button @click="exportCharacterCard" class="export-button">导出角色卡</button>
                 <div v-if="exportError" class="error-text">{{ exportError }}</div>
                 <div v-if="exportSuccess" class="success-text">{{ exportSuccess }}</div>
@@ -613,6 +619,63 @@ const jsonEditorContent = ref('');
 const jsonError = ref('');
 const exportError = ref('');
 const exportSuccess = ref('');
+const snapshots = ref([]);
+const snapshotCursor = ref(-1);
+const snapshotMeta = reactive({
+    currentLabel: '',
+    initialLabel: ''
+});
+const MAX_SNAPSHOTS = 20;
+
+const cloneDeep = (value) => JSON.parse(JSON.stringify(value));
+
+const canUndoSnapshot = computed(() => snapshotCursor.value > 0 && snapshots.value.length > 0);
+const canRestoreInitialSnapshot = computed(() => snapshots.value.length > 0 && snapshotCursor.value !== 0);
+
+const applySnapshotState = (snapshot) => {
+    editableData.value = reactive(cloneDeep(snapshot.data));
+    snapshotMeta.currentLabel = snapshot.label;
+    jsonEditorContent.value = JSON.stringify(editableData.value, null, 2);
+};
+
+const pushSnapshot = (label = '手动快照') => {
+    if (!editableData.value) return;
+
+    const nextSnapshots = snapshots.value.slice(0, snapshotCursor.value + 1);
+    nextSnapshots.push({
+        label,
+        createdAt: Date.now(),
+        data: cloneDeep(editableData.value)
+    });
+
+    if (nextSnapshots.length > MAX_SNAPSHOTS) {
+        nextSnapshots.shift();
+    }
+
+    snapshots.value = nextSnapshots;
+    snapshotCursor.value = snapshots.value.length - 1;
+    snapshotMeta.currentLabel = label;
+    if (!snapshotMeta.initialLabel) {
+        snapshotMeta.initialLabel = label;
+    }
+};
+
+const saveManualSnapshot = () => {
+    pushSnapshot(`手动快照 ${new Date().toLocaleTimeString('zh-CN', { hour12: false })}`);
+    exportSuccess.value = '快照已保存';
+};
+
+const undoLastSnapshot = () => {
+    if (!canUndoSnapshot.value) return;
+    snapshotCursor.value -= 1;
+    applySnapshotState(snapshots.value[snapshotCursor.value]);
+};
+
+const restoreInitialSnapshot = () => {
+    if (!snapshots.value.length) return;
+    snapshotCursor.value = 0;
+    applySnapshotState(snapshots.value[0]);
+};
 
 // 初始化可编辑数据
 const initEditableData = () => {
@@ -810,13 +873,20 @@ const initEditableData = () => {
 
     // 设置世界书条目
     editableData.value.book_entries = bookEntries;
-    
+    snapshots.value = [];
+    snapshotCursor.value = -1;
+    snapshotMeta.currentLabel = '';
+    snapshotMeta.initialLabel = '';
+    pushSnapshot('初始导入');
+    jsonEditorContent.value = JSON.stringify(editableData.value, null, 2);
+
     console.log('初始化了', editableData.value.book_entries.length, '个世界书条目');
     console.log('最终可编辑数据:', editableData.value);
 };
 
 // 创建世界书
 const createCharacterBook = () => {
+    pushSnapshot('创建世界书');
     if (!editableData.value.character_book) {
         editableData.value.character_book = {
             name: '新建世界书',
@@ -835,6 +905,7 @@ const createCharacterBook = () => {
 
 const updateFromJson = () => {
     try {
+        pushSnapshot('应用 JSON 前');
         const data = JSON.parse(jsonEditorContent.value);
         if (isCharacterData(data)) {
             characterData.value = data;
@@ -852,6 +923,7 @@ const updateFromJson = () => {
 };
 
 const addAlternateGreeting = () => {
+    pushSnapshot('新增备选问候语');
     if (!editableData.value.alternate_greetings) {
         editableData.value.alternate_greetings = [];
     }
@@ -859,10 +931,12 @@ const addAlternateGreeting = () => {
 };
 
 const removeAlternateGreeting = (index) => {
+    pushSnapshot('删除备选问候语');
     editableData.value.alternate_greetings = editableData.value.alternate_greetings.filter((_, i) => i !== index);
 };
 
 const addBookEntry = () => {
+    pushSnapshot('新增世界书条目');
     const newIndex = editableData.value.book_entries ? editableData.value.book_entries.length : 0;
     editableData.value.book_entries = [...(editableData.value.book_entries || []), {
         // 基本字段
@@ -912,6 +986,7 @@ const addBookEntry = () => {
 };
 
 const removeBookEntry = (index) => {
+    pushSnapshot('删除世界书条目');
     editableData.value.book_entries = editableData.value.book_entries.filter((_, i) => i !== index);
 };
 
@@ -2227,6 +2302,7 @@ const prepareTranslationCompare = (results, missingTags, type) => {
 // 应用选中的翻译结果
 const applySelectedTranslations = (selectedItems) => {
     try {
+        pushSnapshot('应用基础翻译');
         selectedItems.forEach(item => {
             if (!item.failed && item.translated) {
                 // 处理普通字段（基本信息批量翻译中不再处理备选问候语）
@@ -2365,6 +2441,7 @@ const prepareBookTranslationCompare = (results, missingTags, selectedIndices, fi
 // 应用选中的世界书翻译结果
 const applySelectedBookTranslations = (selectedItems) => {
     try {
+        pushSnapshot('应用世界书翻译');
         selectedItems.forEach(item => {
             if (!item.failed && item.translated && item.entryIndex !== undefined) {
                 const entry = editableData.value.book_entries[item.entryIndex];
@@ -2805,6 +2882,7 @@ const prepareAdvancedTranslationCompare = (results, missingTags) => {
 // 应用选中的高级设置翻译结果
 const applySelectedAdvancedTranslations = (selectedItems) => {
     try {
+        pushSnapshot('应用高级设置翻译');
         selectedItems.forEach(item => {
             if (!item.failed && item.translated) {
                 if (item.field === 'alternate_greetings' && item.index !== undefined) {
@@ -3007,6 +3085,7 @@ const executeGlobalReplace = () => {
         return;
     }
     
+    pushSnapshot('执行全局替换');
     const searchText = replaceForm.originalText;
     const newText = replaceForm.newText ?? '';
     let totalReplaced = 0;
@@ -3085,3 +3164,37 @@ const closeGlobalReplaceModal = () => {
     occurrenceDetails.value = [];
 };
 </script>
+
+
+<style scoped>
+.snapshot-actions {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 8px;
+    flex-wrap: wrap;
+}
+
+.snapshot-button {
+    padding: 8px 12px;
+    border: none;
+    border-radius: 8px;
+    background: #2563eb;
+    color: #fff;
+    cursor: pointer;
+}
+
+.snapshot-button.secondary {
+    background: #475569;
+}
+
+.snapshot-button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.snapshot-tip {
+    margin-bottom: 10px;
+    color: #64748b;
+    font-size: 13px;
+}
+</style>
