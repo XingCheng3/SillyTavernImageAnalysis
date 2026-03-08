@@ -274,7 +274,7 @@ import GlobalReplaceModal from '@/components/modals/GlobalReplaceModal.vue';
 import ErrorModal from '@/components/modals/ErrorModal.vue';
 import { useAppStore } from '@/stores/app';
 import { storeToRefs } from 'pinia';
-import CharacterCardParser, { CharacterCardUtils } from '@/utils/characterCardParser';
+import CharacterCardParser, { CharacterCardUtils, normalizeEditableBookEntry } from '@/utils/characterCardParser';
 import { useStreamTranslation } from '@/composables/useStreamTranslation';
 import { splitIntoBatches, buildBookTranslationTags, BatchState } from '@/utils/batchTranslationHelper';
 
@@ -712,163 +712,26 @@ const initEditableData = () => {
 
     // 处理世界书
     console.log('处理世界书数据...');
-    let bookEntries = [];
-    
-    // V3格式：使用lore数组
-    if (Array.isArray(editableData.value.lore)) {
-        console.log('检测到V3格式世界书:', editableData.value.lore);
-        
-        bookEntries = editableData.value.lore.map((entry, index) => {
-            // 确保entry是对象
-            if (typeof entry !== 'object') {
-                console.warn(`V3世界书条目 ${index} 不是对象:`, entry);
-                entry = { content: String(entry) };
-            }
-            
-            // 准备关键词文本
-            let keysText = '';
-            if (Array.isArray(entry.keys)) {
-                keysText = entry.keys.join(', ');
-            } else if (typeof entry.keys === 'string') {
-                keysText = entry.keys;
-            }
-            
-            // 处理扩展字段
-            const extensions = entry.extensions || {};
-            
-            const newEntry = { 
-                // 保持原始数据结构
-                ...entry,
-                
-                // 基本字段
-                id: entry.id !== undefined ? entry.id : index,
-                name: entry.comment || entry.name || `条目 ${index + 1}`,
-                keysText: keysText,
-                content: entry.content || '',
-                enabled: entry.enabled !== false,
-                
-                // 从原始字段或扩展字段中获取值
-                priority: entry.insertion_order || entry.priority || 0,
-                selective: entry.selective || false,
-                secondary: entry.secondary || false,
-                constant: entry.constant || false,
-                position: entry.position || 'after_char',
-                
-                // 扩展字段
-                depth: extensions.depth || 4,
-                displayIndex: extensions.display_index !== undefined ? extensions.display_index : index,
-                probability: extensions.probability || 100,
-                useProbability: extensions.useProbability !== false,
-                selectiveLogic: extensions.selectiveLogic || 0,
-                group: extensions.group || '',
-                groupOverride: extensions.group_override || false,
-                groupWeight: extensions.group_weight || 100,
-                scanDepth: extensions.scan_depth || null,
-                caseSensitive: extensions.case_sensitive || null,
-                matchWholeWords: extensions.match_whole_words || null,
-                useGroupScoring: extensions.use_group_scoring || null,
-                excludeRecursion: extensions.exclude_recursion || false,
-                preventRecursion: extensions.prevent_recursion || false,
-                delayUntilRecursion: extensions.delay_until_recursion || false,
-                automationId: extensions.automation_id || '',
-                role: extensions.role || 0,
-                vectorized: extensions.vectorized || false,
-                sticky: extensions.sticky || null,
-                cooldown: extensions.cooldown || null,
-                delay: extensions.delay || null,
-                
-                // 保存完整的扩展对象
-                extensions: extensions,
-                
-                // 次要关键词
-                secondary_keys: entry.secondary_keys || []
-            };
-            
-            console.log(`V3条目 ${index}:`, newEntry);
-            return newEntry;
-        });
-    } 
-    // V2格式：使用character_book对象
-    else if (editableData.value.character_book && Array.isArray(editableData.value.character_book.entries)) {
-        console.log('检测到V2格式世界书:', editableData.value.character_book);
-        
-        bookEntries = editableData.value.character_book.entries.map((entry, index) => {
-            // 确保entry是对象
-            if (typeof entry !== 'object') {
-                console.warn(`V2世界书条目 ${index} 不是对象:`, entry);
-                entry = { content: String(entry) };
-            }
-            
-            // 准备关键词文本
-            let keysText = '';
-            if (Array.isArray(entry.keys)) {
-                keysText = entry.keys.join(', ');
-            } else if (typeof entry.keys === 'string') {
-                keysText = entry.keys;
-            }
-            
-            // 处理扩展字段
-            const extensions = entry.extensions || {};
-            
-            const newEntry = { 
-                // 保持原始数据结构
-                ...entry,
-                
-                // 基本字段
-                id: entry.id !== undefined ? entry.id : index,
-                name: entry.comment || entry.name || `条目 ${index + 1}`,
-                keysText: keysText,
-                content: entry.content || '',
-                enabled: entry.enabled !== false,
-                
-                // 从原始字段或扩展字段中获取值
-                priority: entry.insertion_order || entry.priority || 0,
-                selective: entry.selective || false,
-                secondary: entry.secondary || false,
-                constant: entry.constant || false,
-                position: entry.position || 'after_char',
-                
-                // 扩展字段
-                depth: extensions.depth || 4,
-                displayIndex: extensions.display_index !== undefined ? extensions.display_index : index,
-                probability: extensions.probability || 100,
-                useProbability: extensions.useProbability !== false,
-                selectiveLogic: extensions.selectiveLogic || 0,
-                group: extensions.group || '',
-                groupOverride: extensions.group_override || false,
-                groupWeight: extensions.group_weight || 100,
-                scanDepth: extensions.scan_depth || null,
-                caseSensitive: extensions.case_sensitive || null,
-                matchWholeWords: extensions.match_whole_words || null,
-                useGroupScoring: extensions.use_group_scoring || null,
-                excludeRecursion: extensions.exclude_recursion || false,
-                preventRecursion: extensions.prevent_recursion || false,
-                delayUntilRecursion: extensions.delay_until_recursion || false,
-                automationId: extensions.automation_id || '',
-                role: extensions.role || 0,
-                vectorized: extensions.vectorized || false,
-                sticky: extensions.sticky || null,
-                cooldown: extensions.cooldown || null,
-                delay: extensions.delay || null,
-                
-                // 保存完整的扩展对象
-                extensions: extensions,
-                
-                // 次要关键词
-                secondary_keys: entry.secondary_keys || []
-            };
-            
-            console.log(`V2条目 ${index}:`, newEntry);
-            return newEntry;
-        });
-        
-        // 保存世界书基本信息
-        if (!editableData.value.character_book.name) {
-            editableData.value.character_book.name = '世界书';
-        }
-        if (!editableData.value.character_book.description) {
-            editableData.value.character_book.description = '';
-        }
+    const rawBookEntries = Array.isArray(editableData.value.lore)
+        ? editableData.value.lore
+        : (Array.isArray(editableData.value.character_book?.entries)
+            ? editableData.value.character_book.entries
+            : []);
+
+    const bookEntries = rawBookEntries.map((entry, index) => normalizeEditableBookEntry(entry, index));
+
+    if (!editableData.value.character_book) {
+        editableData.value.character_book = {
+            name: '世界书',
+            description: '',
+            scan_depth: 5,
+            token_budget: 2048,
+            entries: [],
+            extensions: {}
+        };
+    } else {
+        editableData.value.character_book.name = editableData.value.character_book.name || '世界书';
+        editableData.value.character_book.description = editableData.value.character_book.description || '';
     }
 
     // 设置世界书条目

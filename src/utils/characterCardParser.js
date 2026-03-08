@@ -465,6 +465,10 @@ function normalizeCharacterData(rawData) {
         charData.message_example = charData.dialogue;
     }
 
+    if (isV3 && Array.isArray(charData.lore)) {
+        syncCharacterBookFromLore(charData);
+    }
+
     return data;
 }
 
@@ -651,6 +655,36 @@ function buildCharacterBookMetadata(existingBook = {}) {
         token_budget: existingBook.token_budget ?? 2048,
         recursive_scanning: existingBook.recursive_scanning ?? false,
         extensions: existingBook.extensions || {},
+    };
+}
+
+function resolveLorebookEntries(charData = {}) {
+    if (Array.isArray(charData.book_entries)) {
+        return charData.book_entries.map((entry, index) => normalizeEditableBookEntry(entry, index));
+    }
+
+    if (Array.isArray(charData.lore)) {
+        return charData.lore.map((entry, index) => normalizeEditableBookEntry(entry, index));
+    }
+
+    if (Array.isArray(charData.character_book?.entries)) {
+        return charData.character_book.entries.map((entry, index) => normalizeEditableBookEntry(entry, index));
+    }
+
+    return [];
+}
+
+function syncCharacterBookFromLore(charData = {}) {
+    if (!Array.isArray(charData.lore)) {
+        return;
+    }
+
+    const loreEntries = charData.lore.map((entry, index) => normalizeEditableBookEntry(entry, index));
+    const existingBook = buildCharacterBookMetadata(charData.character_book || {});
+
+    charData.character_book = {
+        ...existingBook,
+        entries: loreEntries.map((entry, index) => bookEntryToCharacterBookEntry(entry, index)),
     };
 }
 
@@ -878,11 +912,9 @@ class CharacterCardParser {
         delete charData.dialogue;
 
         const hasEditableBookEntries = Array.isArray(charData.book_entries);
-        const normalizedBookEntries = hasEditableBookEntries
-            ? charData.book_entries.map((entry, index) => normalizeEditableBookEntry(entry, index))
-            : [];
+        const normalizedBookEntries = resolveLorebookEntries(charData);
 
-        const shouldWriteBook = normalizedBookEntries.length > 0 || !!charData.character_book || Array.isArray(charData.lore);
+        const shouldWriteBook = hasEditableBookEntries || !!charData.character_book || Array.isArray(charData.lore);
         if (shouldWriteBook) {
             const existingBook = buildCharacterBookMetadata(charData.character_book || {});
             charData.character_book = {
