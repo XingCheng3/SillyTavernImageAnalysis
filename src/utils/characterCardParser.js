@@ -212,7 +212,7 @@ function extractDataFromPNG(data, identifier = 'chara') {
         console.warn('.png文件提前结束: 没有找到IEND头');
     }
 
-    const identifiers = identifier === 'chara' ? ['ccv3', 'chara'] : [identifier];
+    const identifiers = [identifier];
 
     for (const id of identifiers) {
         const found = chunks.filter(x => (
@@ -719,6 +719,30 @@ function buildV3PayloadFromExportData(exportData) {
     return v3Payload;
 }
 
+function choosePrimaryCardPayload(charaData, ccv3Data) {
+    if (charaData && ccv3Data) {
+        const normalizedChara = normalizeCharacterData(charaData);
+        const normalizedCcv3 = normalizeCharacterData(ccv3Data);
+        const charaSpec = normalizedChara.spec || '';
+
+        if (!charaSpec.includes('v3')) {
+            return normalizedChara;
+        }
+
+        return normalizedCcv3;
+    }
+
+    if (ccv3Data) {
+        return normalizeCharacterData(ccv3Data);
+    }
+
+    if (charaData) {
+        return normalizeCharacterData(charaData);
+    }
+
+    return null;
+}
+
 class CharacterCardParser {
     static async parseFromFile(file) {
         return new Promise((resolve, reject) => {
@@ -751,13 +775,13 @@ class CharacterCardParser {
             throw new Error('不是有效的PNG文件');
         }
 
-        const rawData = extractDataFromPNG(bytes, 'chara');
+        const charaData = extractDataFromPNG(bytes, 'chara');
+        const ccv3Data = extractDataFromPNG(bytes, 'ccv3');
+        const normalizedData = choosePrimaryCardPayload(charaData, ccv3Data);
 
-        if (!rawData) {
+        if (!normalizedData) {
             throw new Error('PNG文件中未找到角色卡数据');
         }
-
-        const normalizedData = normalizeCharacterData(rawData);
 
         if (normalizedData.data?.character_book) {
             normalizedData.worldInfo = convertCharacterBook(normalizedData.data.character_book);

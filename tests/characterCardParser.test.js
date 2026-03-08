@@ -4,6 +4,12 @@ import CharacterCardParser, {
     SUPPORTED_SPECS,
     normalizeCharacterData,
 } from '../src/utils/characterCardParser.js';
+import {
+    buildEditableCharacterData,
+    createEmptyBookEntry,
+    detectCharacterSpec,
+    isV3Spec,
+} from '../src/utils/editorCardAdapter.js';
 
 const mockV2CharacterData = {
     spec: SUPPORTED_SPECS.V2,
@@ -250,6 +256,40 @@ async function testExtendedWorldbookFieldsRoundTrip() {
     assert.deepEqual(bookEntry.extensions.triggers, ['chat_start', 'group_message']);
 }
 
+function testEditorAdapterSpecDetectionAndInitialization() {
+    assert.equal(detectCharacterSpec(mockV3CharacterData), SUPPORTED_SPECS.V3);
+    assert.equal(detectCharacterSpec(mockV2CharacterData), SUPPORTED_SPECS.V2);
+    assert.equal(isV3Spec(SUPPORTED_SPECS.V3), true);
+    assert.equal(isV3Spec(SUPPORTED_SPECS.V2), false);
+
+    const editableV3 = buildEditableCharacterData(mockV3CharacterData);
+    assert.equal(editableV3.first_message, '你好，未来的朋友！');
+    assert.deepEqual(editableV3.alternate_greetings, ['欢迎来到V3世界']);
+    assert.equal(editableV3.character_book.name, '世界书');
+    assert.equal(editableV3.book_entries.length, 1);
+
+    const newEntry = createEmptyBookEntry(5);
+    assert.equal(newEntry.id, 5);
+    assert.deepEqual(newEntry.triggers, []);
+    assert.equal(newEntry.ignoreBudget, false);
+}
+
+async function testGreetingExportStrategyAcrossSpecs() {
+    const v3Card = normalizeCharacterData(mockV3CharacterData);
+    v3Card.data.first_message = '新的主问候';
+    v3Card.data.alternate_greetings = ['候选一', '候选二'];
+    const parsedV3 = await roundTrip(v3Card);
+    assert.deepEqual(parsedV3.data.data.greetings, ['新的主问候', '候选一', '候选二']);
+
+    const v2Card = normalizeCharacterData(mockV2CharacterData);
+    v2Card.data.first_message = 'V2主问候';
+    v2Card.data.alternate_greetings = ['V2备选一', 'V2备选二'];
+    const parsedV2 = await roundTrip(v2Card);
+    assert.equal(parsedV2.data.data.first_mes, 'V2主问候');
+    assert.deepEqual(parsedV2.data.data.alternate_greetings, ['V2备选一', 'V2备选二']);
+    assert.equal(parsedV2.data.data.greetings, undefined);
+}
+
 async function runAllTests() {
     console.log('🚀 开始运行 CharacterCardParser P0 回归测试\n');
 
@@ -271,7 +311,13 @@ async function runAllTests() {
     await testExtendedWorldbookFieldsRoundTrip();
     console.log('✓ 世界书扩展字段 round-trip 正确');
 
-    console.log('\n✅ 全部 P0/P1 回归测试通过');
+    testEditorAdapterSpecDetectionAndInitialization();
+    console.log('✓ 编辑适配层 spec/初始化 正确');
+
+    await testGreetingExportStrategyAcrossSpecs();
+    console.log('✓ greetings / first_mes / alternate_greetings 多规格行为正确');
+
+    console.log('\n✅ 全部 P0/P1/P2 回归测试通过');
 }
 
 runAllTests().catch((error) => {

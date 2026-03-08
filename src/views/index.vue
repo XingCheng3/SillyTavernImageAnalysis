@@ -274,7 +274,15 @@ import GlobalReplaceModal from '@/components/modals/GlobalReplaceModal.vue';
 import ErrorModal from '@/components/modals/ErrorModal.vue';
 import { useAppStore } from '@/stores/app';
 import { storeToRefs } from 'pinia';
-import CharacterCardParser, { CharacterCardUtils, normalizeEditableBookEntry } from '@/utils/characterCardParser';
+import CharacterCardParser, { CharacterCardUtils } from '@/utils/characterCardParser';
+import {
+    buildEditableCharacterData,
+    createEmptyBookEntry,
+    createEmptyCharacterBook,
+    detectCharacterSpec,
+    hasEditableCharacterBook,
+    isV3Spec,
+} from '@/utils/editorCardAdapter';
 import { useStreamTranslation } from '@/composables/useStreamTranslation';
 import { splitIntoBatches, buildBookTranslationTags, BatchState } from '@/utils/batchTranslationHelper';
 
@@ -680,62 +688,13 @@ const restoreInitialSnapshot = () => {
 // 初始化可编辑数据
 const initEditableData = () => {
     if (!characterData.value) return;
-    
+
     console.log('初始化可编辑数据开始...');
     console.log('角色卡原始数据:', characterData.value);
-    
-    // 创建一个深拷贝用于编辑，避免直接修改原始数据
-    const sourceData = characterData.value.data || characterData.value;
-    editableData.value = reactive(JSON.parse(JSON.stringify(sourceData)));
 
-    console.log('数据源:', sourceData);
+    const normalizedEditableData = buildEditableCharacterData(characterData.value);
+    editableData.value = reactive(normalizedEditableData);
 
-    // 兼容V1/V2 first_mes
-    if (editableData.value.first_mes && !editableData.value.first_message) {
-        editableData.value.first_message = editableData.value.first_mes;
-    }
-    // 兼容V3 greetings
-    if (Array.isArray(editableData.value.greetings) && editableData.value.greetings.length > 0) {
-        editableData.value.first_message = editableData.value.greetings[0];
-        editableData.value.alternate_greetings = editableData.value.greetings.slice(1);
-        } else {
-        editableData.value.alternate_greetings = editableData.value.alternate_greetings || [];
-    }
-
-    // 兼容 mes_example/dialogue
-    if (editableData.value.mes_example && !editableData.value.message_example) {
-        editableData.value.message_example = editableData.value.mes_example;
-    }
-    if (editableData.value.dialogue && !editableData.value.message_example) {
-        editableData.value.message_example = editableData.value.dialogue;
-    }
-
-    // 处理世界书
-    console.log('处理世界书数据...');
-    const rawBookEntries = Array.isArray(editableData.value.lore)
-        ? editableData.value.lore
-        : (Array.isArray(editableData.value.character_book?.entries)
-            ? editableData.value.character_book.entries
-            : []);
-
-    const bookEntries = rawBookEntries.map((entry, index) => normalizeEditableBookEntry(entry, index));
-
-    if (!editableData.value.character_book) {
-        editableData.value.character_book = {
-            name: '世界书',
-            description: '',
-            scan_depth: 5,
-            token_budget: 2048,
-            entries: [],
-            extensions: {}
-        };
-    } else {
-        editableData.value.character_book.name = editableData.value.character_book.name || '世界书';
-        editableData.value.character_book.description = editableData.value.character_book.description || '';
-    }
-
-    // 设置世界书条目
-    editableData.value.book_entries = bookEntries;
     snapshots.value = [];
     snapshotCursor.value = -1;
     snapshotMeta.currentLabel = '';
@@ -751,14 +710,7 @@ const initEditableData = () => {
 const createCharacterBook = () => {
     pushSnapshot('创建世界书');
     if (!editableData.value.character_book) {
-        editableData.value.character_book = {
-            name: '新建世界书',
-            description: '',
-            scan_depth: 5,
-            token_budget: 2048,
-            entries: [],
-            extensions: {}
-        };
+        editableData.value.character_book = createEmptyCharacterBook({ name: '新建世界书' });
     }
 
     if (!Array.isArray(editableData.value.book_entries)) {
@@ -769,18 +721,13 @@ const createCharacterBook = () => {
 const updateFromJson = () => {
     try {
         pushSnapshot('应用 JSON 前');
-        const data = JSON.parse(jsonEditorContent.value);
-        if (isCharacterData(data)) {
-            characterData.value = data;
-            console.log("成功应用JSON修改:", data);
-            jsonError.value = '';
-            // 更新可编辑数据
-            initEditableData();
-        } else {
-            throw new Error('解析后的数据不是有效的角色卡数据');
-        }
+        const parseResult = CharacterCardUtils.parseJson(jsonEditorContent.value);
+        characterData.value = parseResult.data;
+        console.log('成功应用JSON修改:', parseResult.data);
+        jsonError.value = '';
+        initEditableData();
     } catch (err) {
-        console.error("应用JSON修改失败:", err);
+        console.error('应用JSON修改失败:', err);
         jsonError.value = `应用失败: ${err.message}`;
     }
 };
@@ -801,48 +748,7 @@ const removeAlternateGreeting = (index) => {
 const addBookEntry = () => {
     pushSnapshot('新增世界书条目');
     const newIndex = editableData.value.book_entries ? editableData.value.book_entries.length : 0;
-    editableData.value.book_entries = [...(editableData.value.book_entries || []), normalizeEditableBookEntry({
-        id: newIndex,
-        name: '新条目',
-        comment: '新条目',
-        keys: [],
-        secondary_keys: [],
-        content: '',
-        enabled: true,
-        insertion_order: 0,
-        position: 'after_char',
-        extensions: {
-            display_index: newIndex,
-            depth: 4,
-            probability: 100,
-            useProbability: true,
-            selectiveLogic: 0,
-            group: '',
-            group_override: false,
-            group_weight: 100,
-            scan_depth: null,
-            case_sensitive: null,
-            match_whole_words: null,
-            use_group_scoring: null,
-            exclude_recursion: false,
-            prevent_recursion: false,
-            delay_until_recursion: false,
-            automation_id: '',
-            role: 0,
-            vectorized: false,
-            sticky: null,
-            cooldown: null,
-            delay: null,
-            match_persona_description: false,
-            match_character_description: false,
-            match_character_personality: false,
-            match_character_depth_prompt: false,
-            match_scenario: false,
-            match_creator_notes: false,
-            triggers: [],
-            ignore_budget: false,
-        },
-    }, newIndex)];
+    editableData.value.book_entries = [...(editableData.value.book_entries || []), createEmptyBookEntry(newIndex)];
 };
 
 const removeBookEntry = (index) => {
@@ -864,52 +770,17 @@ const updateEntryKeys = (entry) => {
 };
 
 const isV3Card = () => {
-    if (!characterData.value) return false;
-    return characterData.value.spec?.includes('v3');
+    return isV3Spec(detectCharacterSpec(characterData.value));
 };
 
 // 检查是否有世界书
 const hasCharacterBook = () => {
-    if (!editableData.value) return false;
-
-    if (editableData.value.character_book) {
-        return true;
-    }
-
-    if (Array.isArray(editableData.value.book_entries)) {
-        return true;
-    }
-
-    if (Array.isArray(editableData.value.lore)) {
-        return true;
-    }
-
-    return false;
+    return hasEditableCharacterBook(editableData.value);
 };
 
 // 获取角色卡规格版本
 const getSpecVersion = () => {
-    if (!characterData.value) return '未知';
-    
-    // 检查是否有spec字段
-    if (characterData.value.spec) {
-        return characterData.value.spec;
-    }
-    
-    const data = characterData.value.data || characterData.value;
-    
-    // 检查V3特征
-    if (data.extensions || Array.isArray(data.lore) || Array.isArray(data.greetings)) {
-        return 'chara_card_v3';
-    }
-    
-    // 检查V2特征
-    if (data.character_book || data.alternate_greetings) {
-        return 'chara_card_v2';
-    }
-    
-    // 默认为V1
-    return 'chara_card_v1';
+    return characterData.value ? detectCharacterSpec(characterData.value) : '未知';
 };
 
 // 导出角色卡
