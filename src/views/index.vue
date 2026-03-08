@@ -623,8 +623,6 @@ const handleFileUpload = async (event) => {
     }
 };
 
-const jsonEditorContent = ref('');
-const jsonError = ref('');
 const exportError = ref('');
 const exportSuccess = ref('');
 const snapshots = ref([]);
@@ -643,7 +641,6 @@ const canRestoreInitialSnapshot = computed(() => snapshots.value.length > 0 && s
 const applySnapshotState = (snapshot) => {
     editableData.value = reactive(cloneDeep(snapshot.data));
     snapshotMeta.currentLabel = snapshot.label;
-    jsonEditorContent.value = JSON.stringify(editableData.value, null, 2);
 };
 
 const pushSnapshot = (label = '手动快照') => {
@@ -700,7 +697,6 @@ const initEditableData = () => {
     snapshotMeta.currentLabel = '';
     snapshotMeta.initialLabel = '';
     pushSnapshot('初始导入');
-    jsonEditorContent.value = JSON.stringify(editableData.value, null, 2);
 
     console.log('初始化了', editableData.value.book_entries.length, '个世界书条目');
     console.log('最终可编辑数据:', editableData.value);
@@ -715,20 +711,6 @@ const createCharacterBook = () => {
 
     if (!Array.isArray(editableData.value.book_entries)) {
         editableData.value.book_entries = [];
-    }
-};
-
-const updateFromJson = () => {
-    try {
-        pushSnapshot('应用 JSON 前');
-        const parseResult = CharacterCardUtils.parseJson(jsonEditorContent.value);
-        characterData.value = parseResult.data;
-        console.log('成功应用JSON修改:', parseResult.data);
-        jsonError.value = '';
-        initEditableData();
-    } catch (err) {
-        console.error('应用JSON修改失败:', err);
-        jsonError.value = `应用失败: ${err.message}`;
     }
 };
 
