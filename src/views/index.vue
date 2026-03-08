@@ -21,9 +21,9 @@
 
         <div class="upload-area">
             <label for="file-upload" class="upload-button">
-                选择PNG角色卡
+                选择角色卡（PNG / JSON）
             </label>
-            <input id="file-upload" type="file" accept="image/png" @change="handleFileUpload" class="hidden" />
+            <input id="file-upload" type="file" accept="image/png,application/json,.json" @change="handleFileUpload" class="hidden" />
             <p v-if="fileName" class="file-name">已选择: {{ fileName }}</p>
         </div>
 
@@ -322,6 +322,7 @@ const totalFieldsToTranslate = ref(0);
 const translationErrors = ref([]);
 const isTranslationComplete = ref(false);
 const cancelTranslationFlag = ref(false);
+const basicTranslationAbortController = ref(null);
 // 添加新的状态变量
 
 const isTranslationError = ref(false); // 翻译失败状态
@@ -359,6 +360,8 @@ const {
     cancelStream: cancelBookStream
 } = useStreamTranslation();
 const bookStreamResults = ref([]); // 流式翻译实时结果
+const bookRequestAbortControllers = ref([]);
+const bookTranslationMissingTags = ref([]);
 
 // 高级设置批量翻译相关变量
 const showAdvancedBatchTranslateModal = ref(false);
@@ -374,6 +377,7 @@ const advancedTotalToTranslate = ref(0);
 const advancedTranslationErrors = ref([]);
 const isAdvancedTranslationComplete = ref(false);
 const cancelAdvancedTranslationFlag = ref(false);
+const advancedTranslationAbortController = ref(null);
 const isAdvancedTranslationError = ref(false);
 const canRetryAdvancedTranslation = ref(false);
 const advancedTranslationStartTime = ref(null);
@@ -558,48 +562,50 @@ const handleFileUpload = async (event) => {
 
     fileName.value = file.name;
     error.value = '';
-    // 清空数据前先记录日志
     console.log('开始处理新文件，清空原有数据');
     characterData.value = null;
-    editableData.value = null;  // 确保也清空可编辑数据
+    editableData.value = null;
     originalFileBytes.value = null;
     isLoading.value = true;
 
     try {
-        // 创建文件预览
-        imagePreview.value = URL.createObjectURL(file);
+        const isJsonFile = file.type === 'application/json' || file.name.toLowerCase().endsWith('.json');
 
-        // 读取原始文件字节数据用于后续导出
+        if (isJsonFile) {
+            imagePreview.value = '';
+            const rawText = await file.text();
+            const parseResult = CharacterCardUtils.parseJson(rawText);
+
+            if (!parseResult.success) {
+                throw new Error('解析 JSON 角色卡失败');
+            }
+
+            characterData.value = parseResult.data;
+            initEditableData();
+            return;
+        }
+
+        imagePreview.value = URL.createObjectURL(file);
         const arrayBuffer = await file.arrayBuffer();
         originalFileBytes.value = new Uint8Array(arrayBuffer);
 
-        // 使用新的封装模块解析角色卡
         const parseResult = await CharacterCardUtils.parseFile(file);
-        
+
         if (parseResult.success) {
             characterData.value = parseResult.data;
-            console.log("成功解析角色卡数据:", parseResult);
-            console.log("角色卡版本:", parseResult.metadata.version);
-            console.log("是否包含世界书:", parseResult.metadata.hasWorldBook);
-            
-            // 调试：检查字符编码
-            const charData = parseResult.data.data || parseResult.data;
-            console.log("角色名称:", charData.name);
-            console.log("角色描述:", charData.description);
-            if (charData.character_book?.name) {
-                console.log("世界书名称:", charData.character_book.name);
-            }
-            
-            // 初始化可编辑数据
+            console.log('成功解析角色卡数据:', parseResult);
+            console.log('角色卡版本:', parseResult.metadata.version);
+            console.log('是否包含世界书:', parseResult.metadata.hasWorldBook);
             initEditableData();
         } else {
             throw new Error('解析角色卡失败');
         }
     } catch (err) {
-        console.error("解析错误:", err);
+        console.error('解析错误:', err);
         error.value = `解析失败: ${err.message}`;
     } finally {
         isLoading.value = false;
+        event.target.value = '';
     }
 };
 
@@ -811,35 +817,20 @@ const initEditableData = () => {
 
 // 创建世界书
 const createCharacterBook = () => {
-    // 初始化character_book如果不存在
     if (!editableData.value.character_book) {
         editableData.value.character_book = {
             name: '新建世界书',
-            description: '世界书描述',
+            description: '',
             scan_depth: 5,
             token_budget: 2048,
-            entries: []  // 确保entries数组初始化
+            entries: [],
+            extensions: {}
         };
     }
-    
-    // 初始化book_entries如果不存在
-    if (!editableData.value.book_entries) {
+
+    if (!Array.isArray(editableData.value.book_entries)) {
         editableData.value.book_entries = [];
     }
-    
-    // 添加一个默认条目
-    editableData.value.book_entries.push({
-        name: '条目 1',
-        keysText: '关键词1, 关键词2',
-        keys: ['关键词1', '关键词2'],
-        content: '条目内容',
-        enabled: true,
-        priority: 0,
-        selective: false,
-        secondary: false,
-        constant: false,
-        position: 'after_char'
-    });
 };
 
 const updateFromJson = () => {
@@ -945,24 +936,19 @@ const isV3Card = () => {
 // 检查是否有世界书
 const hasCharacterBook = () => {
     if (!editableData.value) return false;
-    
-    // 检查是否有世界书条目
-    if (editableData.value.book_entries && editableData.value.book_entries.length > 0) {
+
+    if (editableData.value.character_book) {
         return true;
     }
-    
-    // 检查V2格式的character_book
-    if (editableData.value.character_book && 
-        editableData.value.character_book.entries && 
-        editableData.value.character_book.entries.length > 0) {
+
+    if (Array.isArray(editableData.value.book_entries)) {
         return true;
     }
-    
-    // 检查V3格式的lore数组
-    if (Array.isArray(editableData.value.lore) && editableData.value.lore.length > 0) {
+
+    if (Array.isArray(editableData.value.lore)) {
         return true;
     }
-    
+
     return false;
 };
 
@@ -1229,12 +1215,14 @@ const startBatchTranslation = async () => {
         currentTranslatingField.value = '正在翻译所有字段...';
         
         // 单次API请求翻译所有内容
+        basicTranslationAbortController.value = new AbortController();
         const response = await fetch(apiSettings.value.url + '/chat/completions', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
                 'Authorization': `Bearer ${apiSettings.value.key}`
             },
+            signal: basicTranslationAbortController.value.signal,
             body: JSON.stringify({
                 model: apiSettings.value.model,
                 messages: [
@@ -1247,6 +1235,7 @@ const startBatchTranslation = async () => {
                 temperature: 0.3  // 降低温度以提高准确性
             })
         });
+        basicTranslationAbortController.value = null;
 
         if (!response.ok) {
             const errData = await response.json();
@@ -1337,6 +1326,10 @@ const startBatchTranslation = async () => {
         }
 
     } catch (err) {
+        if (err?.name === 'AbortError') {
+            console.log('批量翻译已取消');
+            return;
+        }
         console.error('批量翻译失败:', err);
         
         // 解析错误信息
@@ -1435,6 +1428,8 @@ const showTranslationConfirmDialog = (results, missingTags) => {
 
 const cancelTranslation = () => {
     cancelTranslationFlag.value = true;
+    basicTranslationAbortController.value?.abort();
+    basicTranslationAbortController.value = null;
     isTranslating.value = false;
     isTranslationComplete.value = false;
 };
@@ -1496,6 +1491,7 @@ const startBookBatchTranslation = async () => {
     bookTranslatedCount.value = 0;
     bookTotalToTranslate.value = 0;
     bookTranslationErrors.value = [];
+    bookTranslationMissingTags.value = [];
     isBookTranslationComplete.value = false;
     isBookTranslationError.value = false;
     canRetryBookTranslation.value = false;
@@ -1662,8 +1658,13 @@ const startBookBatchTranslation = async () => {
                     // 记录缺失标签
                     if (missingTags.length > 0) {
                         missingTags.forEach(({ field, tag }) => {
-                            bookTranslationErrors.value.push({
+                            const missingItem = {
                                 field: `批次${batchIndex + 1} - ${field}`,
+                                tag,
+                            };
+                            bookTranslationMissingTags.value.push(missingItem);
+                            bookTranslationErrors.value.push({
+                                field: missingItem.field,
                                 message: `标签 ${tag} 在返回结果中丢失`
                             });
                         });
@@ -1673,12 +1674,15 @@ const startBookBatchTranslation = async () => {
                     console.log(`批次 ${batchIndex + 1} 使用普通翻译模式`);
         
                     // 普通翻译（非流式）
+        const batchAbortController = new AbortController();
+        bookRequestAbortControllers.value.push(batchAbortController);
         const response = await fetch(apiSettings.value.url + '/chat/completions', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
                 'Authorization': `Bearer ${apiSettings.value.key}`
             },
+            signal: batchAbortController.signal,
             body: JSON.stringify({
                 model: apiSettings.value.model,
                 messages: [
@@ -1691,6 +1695,8 @@ const startBookBatchTranslation = async () => {
                 temperature: 0.3
             })
         });
+
+        bookRequestAbortControllers.value = bookRequestAbortControllers.value.filter(controller => controller !== batchAbortController);
 
         if (!response.ok) {
             const errData = await response.json();
@@ -1759,8 +1765,13 @@ const startBookBatchTranslation = async () => {
                     // 记录丢失的标签作为错误
                     if (missingTags.length > 0) {
                         missingTags.forEach(({ field, tag }) => {
-                            bookTranslationErrors.value.push({
+                            const missingItem = {
                                 field: `批次${batchIndex + 1} - ${field}`,
+                                tag,
+                            };
+                            bookTranslationMissingTags.value.push(missingItem);
+                            bookTranslationErrors.value.push({
+                                field: missingItem.field,
                                 message: `标签 ${tag} 在返回结果中丢失`
                             });
                         });
@@ -1810,6 +1821,7 @@ const startBookBatchTranslation = async () => {
         // 统计批次结果
         const successCount = bookBatchState.getSuccessCount();
         const failedBatches = bookBatchState.getFailedBatches();
+        const allMissingTags = [...bookTranslationMissingTags.value];
         
         console.log(`✅ 成功: ${successCount}/${totalBatches} 批`);
         console.log(`❌ 失败: ${failedBatches.length}/${totalBatches} 批`, failedBatches);
@@ -1834,7 +1846,7 @@ const startBookBatchTranslation = async () => {
         }
 
             // 准备对比数据并显示对比界面
-            prepareBookTranslationCompare(allResults, [], selectedIndices, fieldsToTranslate);
+            prepareBookTranslationCompare(allResults, allMissingTags, selectedIndices, fieldsToTranslate);
         } else {
             // 所有批次都失败了
             const badFormatMsg = `所有 ${totalBatches} 个批次翻译均失败，请检查API配置或重试`;
@@ -1851,6 +1863,10 @@ const startBookBatchTranslation = async () => {
         }
 
     } catch (err) {
+        if (err?.name === 'AbortError') {
+            console.log('世界书翻译已取消');
+            return;
+        }
         console.error('世界书批量翻译失败:', err);
         
         // 解析错误信息
@@ -1942,24 +1958,25 @@ const cancelBookTranslation = () => {
     cancelBookTranslationFlag.value = true;
     isBookTranslating.value = false;
     isBookTranslationComplete.value = false;
-    
-    // 取消流式翻译
+
     cancelBookStream();
+    bookRequestAbortControllers.value.forEach(controller => controller.abort());
+    bookRequestAbortControllers.value = [];
 };
 
 const closeBookBatchTranslateModal = () => {
     showBookBatchTranslateModal.value = false;
-    // 重置状态
     isBookTranslating.value = false;
     isBookTranslationComplete.value = false;
     isBookTranslationError.value = false;
     canRetryBookTranslation.value = false;
     bookTranslationErrors.value = [];
+    bookTranslationMissingTags.value = [];
     cancelBookTranslationFlag.value = false;
     selectedBookEntries.value = [];
     bookStreamResults.value = [];
-    
-    // 确保停止时间跟踪
+    bookRequestAbortControllers.value = [];
+
     stopTimeTracking();
 };
 
@@ -2055,12 +2072,15 @@ const retryBookBatch = async (batchIndex) => {
             }
         } else {
             // 普通翻译
+            const retryAbortController = new AbortController();
+            bookRequestAbortControllers.value.push(retryAbortController);
             const response = await fetch(apiSettings.value.url + '/chat/completions', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
                     'Authorization': `Bearer ${apiSettings.value.key}`
                 },
+                signal: retryAbortController.signal,
                 body: JSON.stringify({
                     model: apiSettings.value.model,
                     messages: [
@@ -2074,6 +2094,8 @@ const retryBookBatch = async (batchIndex) => {
                 })
             });
             
+            bookRequestAbortControllers.value = bookRequestAbortControllers.value.filter(controller => controller !== retryAbortController);
+
             if (!response.ok) {
                 const errData = await response.json();
                 throw new Error(errData.error?.message || '请求失败');
@@ -2509,12 +2531,14 @@ const startAdvancedBatchTranslation = async () => {
         console.log('发送翻译请求:', translationText);
         
         // 单次API请求翻译所有内容
+        advancedTranslationAbortController.value = new AbortController();
         const response = await fetch(apiSettings.value.url + '/chat/completions', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
                 'Authorization': `Bearer ${apiSettings.value.key}`
             },
+            signal: advancedTranslationAbortController.value.signal,
             body: JSON.stringify({
                 model: apiSettings.value.model,
                 messages: [
@@ -2527,6 +2551,7 @@ const startAdvancedBatchTranslation = async () => {
                 temperature: 0.3
             })
         });
+        advancedTranslationAbortController.value = null;
         
         if (!response.ok) {
             const errData = await response.json();
@@ -2623,6 +2648,10 @@ const startAdvancedBatchTranslation = async () => {
         prepareAdvancedTranslationCompare(results, missingTags);
         
     } catch (err) {
+        if (err?.name === 'AbortError') {
+            console.log('高级设置翻译已取消');
+            return;
+        }
         console.error('高级设置批量翻译失败:', err);
         
         // 解析错误信息
@@ -2814,6 +2843,8 @@ const getAdvancedFieldDisplayName = (field) => {
 // 取消高级设置翻译
 const cancelAdvancedTranslation = () => {
     cancelAdvancedTranslationFlag.value = true;
+    advancedTranslationAbortController.value?.abort();
+    advancedTranslationAbortController.value = null;
     isAdvancedTranslating.value = false;
     isAdvancedTranslationComplete.value = false;
 };
@@ -2971,13 +3002,13 @@ const checkOccurrences = () => {
 };
 
 const executeGlobalReplace = () => {
-    if (!replaceForm.originalText || !replaceForm.newText || !editableData.value) {
-        alert('请填写原文本和新文本！');
+    if (!replaceForm.originalText || !editableData.value) {
+        alert('请填写原文本！');
         return;
     }
     
     const searchText = replaceForm.originalText;
-    const newText = replaceForm.newText;
+    const newText = replaceForm.newText ?? '';
     let totalReplaced = 0;
     
     // 定义要替换的字段

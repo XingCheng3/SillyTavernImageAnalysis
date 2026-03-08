@@ -12,6 +12,7 @@
             <div class="modal-body">
                 <div class="compare-instructions">
                     <p>请查看翻译结果，选择要应用的字段。勾选的字段将使用翻译结果替换原文。</p>
+                    <p class="failed-tip">失败项会以未勾选状态展示，仅用于提醒你哪些字段没有成功翻译。</p>
                 </div>
                 
                 <!-- 翻译信息显示 -->
@@ -177,7 +178,7 @@ const getChangeText = (original, translated) => {
 
 // 计算属性
 const selectedCount = computed(() => {
-    return compareItems.value.filter(item => item.selected).length;
+    return compareItems.value.filter(item => item.selected && !item.failed).length;
 });
 
 const estimatedChanges = computed(() => {
@@ -193,7 +194,7 @@ const updateSelection = () => {
 
 const selectAll = () => {
     compareItems.value.forEach(item => {
-        item.selected = true;
+        item.selected = !item.failed;
     });
 };
 
@@ -207,7 +208,7 @@ const selectRecommended = () => {
     compareItems.value.forEach(item => {
         // 智能推荐：选择有实际变化的翻译
         const hasChange = getChangeType(item.original, item.translated) !== 'no-change';
-        item.selected = hasChange;
+        item.selected = hasChange && !item.failed;
     });
 };
 
@@ -230,7 +231,7 @@ watch(() => props.compareData, (newData) => {
     if (newData && newData.length > 0) {
         compareItems.value = newData.map(item => ({
             ...item,
-            selected: true // 默认全选
+            selected: item.failed ? false : (item.selected ?? true)
         }));
     }
 }, { immediate: true });
@@ -239,7 +240,7 @@ watch(() => props.show, (newVal) => {
     if (newVal) {
         // 重置选择状态
         compareItems.value.forEach(item => {
-            item.selected = true;
+            item.selected = item.failed ? false : (item.selected ?? true);
         });
     }
 });
