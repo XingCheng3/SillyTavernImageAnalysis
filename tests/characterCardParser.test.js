@@ -199,6 +199,57 @@ async function testJsonImportRoundTrip() {
     assert.equal(roundTripped.data.data.mes_example ?? '', '');
 }
 
+async function testExtendedWorldbookFieldsRoundTrip() {
+    const card = normalizeCharacterData(mockV3CharacterData);
+    card.data.book_entries = [
+        {
+            id: 99,
+            name: '扩展字段条目',
+            comment: '扩展字段条目',
+            keys: ['扩展'],
+            secondary_keys: ['字段'],
+            content: '测试扩展字段',
+            enabled: true,
+            insertion_order: 8,
+            position: 'after_char',
+            triggers: ['chat_start', 'group_message'],
+            ignoreBudget: true,
+            matchPersonaDescription: true,
+            matchCharacterDescription: true,
+            matchCharacterPersonality: false,
+            matchCharacterDepthPrompt: true,
+            matchScenario: true,
+            matchCreatorNotes: false,
+            extensions: {
+                display_index: 3,
+                probability: 50,
+                depth: 2,
+                match_persona_description: true,
+                match_character_description: true,
+                match_character_personality: false,
+                match_character_depth_prompt: true,
+                match_scenario: true,
+                match_creator_notes: false,
+                triggers: ['chat_start', 'group_message'],
+                ignore_budget: true,
+            },
+        },
+    ];
+
+    const parsed = await roundTrip(card);
+    const loreEntry = parsed.data.data.lore[0];
+    const bookEntry = parsed.data.data.character_book.entries[0];
+
+    assert.deepEqual(loreEntry.extensions.triggers, ['chat_start', 'group_message']);
+    assert.equal(loreEntry.extensions.ignore_budget, true);
+    assert.equal(loreEntry.extensions.match_persona_description, true);
+    assert.equal(loreEntry.extensions.match_character_description, true);
+    assert.equal(loreEntry.extensions.match_character_depth_prompt, true);
+    assert.equal(loreEntry.extensions.match_scenario, true);
+    assert.equal(bookEntry.extensions.ignore_budget, true);
+    assert.deepEqual(bookEntry.extensions.triggers, ['chat_start', 'group_message']);
+}
+
 async function runAllTests() {
     console.log('🚀 开始运行 CharacterCardParser P0 回归测试\n');
 
@@ -217,7 +268,10 @@ async function runAllTests() {
     await testJsonImportRoundTrip();
     console.log('✓ JSON 导入可接入统一闭环');
 
-    console.log('\n✅ 全部 P0 回归测试通过');
+    await testExtendedWorldbookFieldsRoundTrip();
+    console.log('✓ 世界书扩展字段 round-trip 正确');
+
+    console.log('\n✅ 全部 P0/P1 回归测试通过');
 }
 
 runAllTests().catch((error) => {

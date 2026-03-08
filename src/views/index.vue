@@ -801,51 +801,48 @@ const removeAlternateGreeting = (index) => {
 const addBookEntry = () => {
     pushSnapshot('新增世界书条目');
     const newIndex = editableData.value.book_entries ? editableData.value.book_entries.length : 0;
-    editableData.value.book_entries = [...(editableData.value.book_entries || []), {
-        // 基本字段
+    editableData.value.book_entries = [...(editableData.value.book_entries || []), normalizeEditableBookEntry({
         id: newIndex,
         name: '新条目',
-        keysText: '',
+        comment: '新条目',
         keys: [],
+        secondary_keys: [],
         content: '',
         enabled: true,
-        
-        // 原始字段
-        priority: 0,
-        selective: false,
-        secondary: false,
-        constant: false,
+        insertion_order: 0,
         position: 'after_char',
-        
-        // 扩展字段（与SillyTavern兼容）
-        depth: 4,
-        displayIndex: newIndex,
-        probability: 100,
-        useProbability: true,
-        selectiveLogic: 0,
-        group: '',
-        groupOverride: false,
-        groupWeight: 100,
-        scanDepth: null,
-        caseSensitive: null,
-        matchWholeWords: null,
-        useGroupScoring: null,
-        excludeRecursion: false,
-        preventRecursion: false,
-        delayUntilRecursion: false,
-        automationId: '',
-        role: 0,
-        vectorized: false,
-        sticky: null,
-        cooldown: null,
-        delay: null,
-        
-        // 扩展对象
-        extensions: {},
-        
-        // 次要关键词
-        secondary_keys: []
-    }];
+        extensions: {
+            display_index: newIndex,
+            depth: 4,
+            probability: 100,
+            useProbability: true,
+            selectiveLogic: 0,
+            group: '',
+            group_override: false,
+            group_weight: 100,
+            scan_depth: null,
+            case_sensitive: null,
+            match_whole_words: null,
+            use_group_scoring: null,
+            exclude_recursion: false,
+            prevent_recursion: false,
+            delay_until_recursion: false,
+            automation_id: '',
+            role: 0,
+            vectorized: false,
+            sticky: null,
+            cooldown: null,
+            delay: null,
+            match_persona_description: false,
+            match_character_description: false,
+            match_character_personality: false,
+            match_character_depth_prompt: false,
+            match_scenario: false,
+            match_creator_notes: false,
+            triggers: [],
+            ignore_budget: false,
+        },
+    }, newIndex)];
 };
 
 const removeBookEntry = (index) => {
