@@ -282,7 +282,6 @@ import NotificationBanner from '@/components/common/NotificationBanner.vue';
 import { useAppStore } from '@/stores/app';
 import { storeToRefs } from 'pinia';
 import CharacterCardParser, { CharacterCardUtils } from '@/utils/characterCardParser';
-import { getAdvancedFieldDisplayName } from '@/utils/translationDisplayNames';
 import { useStreamTranslation } from '@/composables/useStreamTranslation';
 import { useOperationFeedback } from '@/composables/useOperationFeedback';
 import { useGlobalReplace } from '@/composables/useGlobalReplace';
@@ -292,6 +291,8 @@ import { useTranslationCompare } from '@/composables/useTranslationCompare';
 import { useSnapshotHistory } from '@/composables/useSnapshotHistory';
 import { useTranslationTiming } from '@/composables/useTranslationTiming';
 import { useCharacterEditor } from '@/composables/useCharacterEditor';
+import { useBasicTranslation } from '@/composables/useBasicTranslation';
+import { useAdvancedTranslationActions } from '@/composables/useAdvancedTranslationActions';
 import { splitIntoBatches, buildBookTranslationTags, BatchState } from '@/utils/batchTranslationHelper';
 
 const appStore = useAppStore();
@@ -329,28 +330,6 @@ const debugMode = ref(true); // 开启调试模式
 const showSettingsModal = ref(false);
 const showPromptModal = ref(false);
 const showJailbreakModal = ref(false);
-// 批量翻译相关变量
-const showBatchTranslateModal = ref(false);
-const selectedFields = reactive({
-    name: true,
-    description: true,
-    personality: true,
-    scenario: true,
-    first_message: true,
-    message_example: true
-});
-const isTranslating = ref(false);
-const currentTranslatingField = ref('');
-const translatedCount = ref(0);
-const totalFieldsToTranslate = ref(0);
-const translationErrors = ref([]);
-const isTranslationComplete = ref(false);
-const cancelTranslationFlag = ref(false);
-const basicTranslationAbortController = ref(null);
-// 添加新的状态变量
-
-const isTranslationError = ref(false); // 翻译失败状态
-const canRetryTranslation = ref(false); // 是否可以重试
 
 // 世界书批量翻译相关变量
 const showBookBatchTranslateModal = ref(false);
@@ -531,6 +510,39 @@ const {
     advancedTranslationDuration,
 });
 
+const {
+    showBatchTranslateModal,
+    selectedFields,
+    isTranslating,
+    currentTranslatingField,
+    translatedCount,
+    totalFieldsToTranslate,
+    translationErrors,
+    isTranslationComplete,
+    cancelTranslationFlag,
+    basicTranslationAbortController,
+    isTranslationError,
+    canRetryTranslation,
+    selectAllFields,
+    deselectAllFields,
+    startBatchTranslation,
+    cancelTranslation,
+    closeBatchTranslateModal,
+} = useBasicTranslation({
+    editableData,
+    apiSettings,
+    translationConfig,
+    checkAndPromptApiConfig,
+    startTimeTracking,
+    stopTimeTracking,
+    prepareTranslationCompare,
+    buildTranslationPrompt,
+    getFriendlyErrorMessage,
+    mapErrorCode,
+    openErrorModal,
+    showOperationNotice,
+});
+
 // 计算属性
 const hasSelectedFields = computed(() => {
     return Object.values(selectedFields).some(selected => selected);
@@ -576,6 +588,39 @@ const hasAdvancedSelectedFields = computed(() => {
 const advancedProgressPercentage = computed(() => {
     if (advancedTotalToTranslate.value === 0) return 0;
     return Math.round((advancedTranslatedCount.value / advancedTotalToTranslate.value) * 100);
+});
+
+const {
+    selectAllAlternateGreetings,
+    deselectAllAlternateGreetings,
+    startAdvancedBatchTranslation,
+    cancelAdvancedTranslation,
+    closeAdvancedBatchTranslateModal,
+} = useAdvancedTranslationActions({
+    editableData,
+    advancedTranslateFields,
+    selectedAlternateGreetings,
+    hasAdvancedSelectedFields,
+    apiSettings,
+    translationConfig,
+    buildTranslationPrompt,
+    startAdvancedTimeTracking,
+    stopTimeTracking,
+    prepareAdvancedTranslationCompare,
+    getFriendlyErrorMessage,
+    mapErrorCode,
+    openErrorModal,
+    showOperationNotice,
+    showAdvancedBatchTranslateModal,
+    isAdvancedTranslating,
+    advancedTranslatedCount,
+    advancedTotalToTranslate,
+    advancedTranslationErrors,
+    isAdvancedTranslationComplete,
+    cancelAdvancedTranslationFlag,
+    advancedTranslationAbortController,
+    isAdvancedTranslationError,
+    canRetryAdvancedTranslation,
 });
 
 const tabs = [
@@ -666,303 +711,6 @@ onMounted(() => {
 
 
 
-const selectAllFields = () => {
-    selectedFields.name = true;
-    selectedFields.description = true;
-    selectedFields.personality = true;
-    selectedFields.scenario = true;
-    selectedFields.first_message = true;
-    selectedFields.message_example = true;
-};
-
-const deselectAllFields = () => {
-    selectedFields.name = false;
-    selectedFields.description = false;
-    selectedFields.personality = false;
-    selectedFields.scenario = false;
-    selectedFields.first_message = false;
-    selectedFields.message_example = false;
-};
-
-const fieldNameMap = {
-    name: '角色名称',
-    description: '描述',
-    personality: '性格',
-    scenario: '场景',
-    first_message: '首次问候',
-    message_example: '示例对话'
-};
-
-const startBatchTranslation = async () => {
-    // 首先检查API配置
-    if (!checkAndPromptApiConfig()) {
-        return;
-    }
-    
-    isTranslating.value = true;
-    currentTranslatingField.value = '准备翻译...';
-    translatedCount.value = 0;
-    totalFieldsToTranslate.value = 0;
-    translationErrors.value = [];
-    isTranslationComplete.value = false;
-    isTranslationError.value = false;
-    canRetryTranslation.value = false;
-    cancelTranslationFlag.value = false;
-    
-    // 启动时间跟踪
-    startTimeTracking();
-
-    // 准备需要翻译的字段
-    const fieldsToTranslate = [];
-    let totalItemsToTranslate = 0;
-    
-    // 检查普通字段
-    Object.keys(selectedFields).forEach(field => {
-        if (selectedFields[field] && editableData.value[field] && editableData.value[field].trim()) {
-            // 处理普通字段
-            fieldsToTranslate.push({
-                type: 'normal',
-                field: field,
-                content: editableData.value[field].trim()
-            });
-            totalItemsToTranslate++;
-        }
-    });
-    
-    if (fieldsToTranslate.length === 0) {
-        showOperationNotice({
-            type: 'warning',
-            title: '没有可翻译内容',
-            message: '请先勾选并填写有文本内容的基础字段。',
-        });
-        isTranslating.value = false;
-        return;
-    }
-    
-    totalFieldsToTranslate.value = totalItemsToTranslate;
-
-    try {
-        // 构建带标签的文本
-        let taggedText = '';
-        const fieldMap = {};
-        
-        fieldsToTranslate.forEach((item, index) => {
-            const tag = `TXT${index + 1}`;
-            taggedText += `<${tag}>${item.content}</${tag}>\n\n`;
-            fieldMap[tag] = item;
-        });
-
-        currentTranslatingField.value = '正在翻译所有字段...';
-        
-        // 单次API请求翻译所有内容
-        basicTranslationAbortController.value = new AbortController();
-        const response = await fetch(apiSettings.value.url + '/chat/completions', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${apiSettings.value.key}`
-            },
-            signal: basicTranslationAbortController.value.signal,
-            body: JSON.stringify({
-                model: apiSettings.value.model,
-                messages: [
-                    { 
-                        role: 'system', 
-                        content: buildTranslationPrompt(translationConfig.value, true)
-                    },
-                    { role: 'user', content: taggedText }
-                ],
-                temperature: 0.3  // 降低温度以提高准确性
-            })
-        });
-        basicTranslationAbortController.value = null;
-
-        if (!response.ok) {
-            const errData = await response.json();
-            // 保存完整的错误信息
-            const errorInfo = {
-                status: response.status,
-                statusText: response.statusText,
-                ...errData.error
-            };
-            const errorMessage = JSON.stringify(errorInfo, null, 2);
-            throw new Error(errorMessage);
-        }
-
-        const data = await response.json();
-        if (!data.choices || data.choices.length === 0) {
-            throw new Error('API未返回任何结果');
-        }
-
-        const translatedText = data.choices[0].message.content;
-        console.log('API返回的翻译结果:', translatedText);
-
-        // 解析翻译结果
-        const translationResults = {};
-        const missingTags = [];
-        const expectedTags = Object.keys(fieldMap);
-        
-        for (const [tag, item] of Object.entries(fieldMap)) {
-            const regex = new RegExp(`<${tag}>([\\s\\S]*?)<\\/${tag}>`, 'i');
-            const match = translatedText.match(regex);
-            
-            if (match && match[1]) {
-                // 处理普通字段（基本信息批量翻译中不再处理备选问候语）
-                translationResults[item.field] = match[1].trim();
-                translatedCount.value++;
-            } else {
-                const fieldDisplayName = fieldNameMap[item.field] || item.field;
-                missingTags.push({
-                    field: fieldDisplayName,
-                    tag: tag
-                });
-            }
-        }
-
-        // 若所有标签均未解析成功，视为返回格式不符合预期
-        if (Object.keys(translationResults).length === 0 || missingTags.length === expectedTags.length) {
-            const badFormatMsg = '返回结果未遵循预期返回格式，请重试';
-            openErrorModal({
-                title: '翻译失败',
-                code: 'BAD_FORMAT',
-                message: badFormatMsg,
-                details: { expectedTags, translatedText: translatedText?.slice(0, 800) }
-            });
-            translationErrors.value.push({ field: '批量翻译', message: badFormatMsg });
-            isTranslationError.value = true;
-            canRetryTranslation.value = true;
-            isTranslating.value = false;
-            stopTimeTracking();
-            return;
-        }
-
-        // 显示结果确认对话框
-        if (Object.keys(translationResults).length > 0) {
-            // 准备对比数据并显示对比界面
-            prepareTranslationCompare(translationResults, missingTags, 'basic');
-        } else {
-            const badFormatMsg = '返回结果未遵循预期返回格式，请重试';
-            openErrorModal({
-                title: '翻译失败',
-                code: 'BAD_FORMAT',
-                message: badFormatMsg,
-            });
-            translationErrors.value.push({ field: '批量翻译', message: badFormatMsg });
-            isTranslationError.value = true;
-            canRetryTranslation.value = true;
-            isTranslating.value = false;
-            stopTimeTracking();
-            return;
-        }
-
-        // 记录丢失的标签作为错误
-        if (missingTags.length > 0) {
-            missingTags.forEach(({ field, tag }) => {
-                translationErrors.value.push({
-                    field: field,
-                    message: `标签 ${tag} 在返回结果中丢失`
-                });
-            });
-        }
-
-    } catch (err) {
-        if (err?.name === 'AbortError') {
-            console.log('批量翻译已取消');
-            return;
-        }
-        console.error('批量翻译失败:', err);
-        
-        // 解析错误信息
-        let errorMessage = err.message;
-        let errorDetails = null;
-        
-        try {
-            // 尝试解析服务器返回的错误格式
-            if (err.message.includes('{')) {
-                const errorObj = JSON.parse(err.message);
-                if (errorObj.error) {
-                    errorDetails = errorObj.error;
-                    errorMessage = errorObj.error.message || err.message;
-                } else if (errorObj.code || errorObj.type) {
-                    errorDetails = errorObj;
-                    errorMessage = errorObj.message || err.message;
-                }
-            }
-        } catch (parseErr) {
-            // 如果不是JSON格式，使用原始错误信息
-            console.log('非JSON格式错误，使用原始信息');
-        }
-        
-        // 合并HTTP状态信息
-        if (!errorDetails && err && typeof err === 'object') {
-            try {
-                const parsed = JSON.parse(err.message);
-                if (parsed && (parsed.status || parsed.statusText)) {
-                    errorDetails = { ...parsed, ...(parsed.error || {}) };
-                }
-            } catch (_) {}
-        }
-
-        // 显示用户友好的错误信息弹窗
-        const friendlyMessage = getFriendlyErrorMessage(errorDetails || { message: errorMessage });
-        openErrorModal({
-            title: '翻译失败',
-            code: mapErrorCode(errorDetails || { message: errorMessage }),
-            message: friendlyMessage,
-            status: errorDetails?.status,
-            statusText: errorDetails?.statusText,
-            details: errorDetails || { message: errorMessage }
-        });
-        
-        translationErrors.value.push({
-            field: '批量翻译',
-            message: errorMessage,
-            details: errorDetails
-        });
-        
-        // 设置错误状态，允许重试
-        isTranslationError.value = true;
-        canRetryTranslation.value = true;
-        isTranslating.value = false;
-        
-        // 停止时间跟踪
-        stopTimeTracking();
-        
-        // 不设置完成状态，因为这是错误情况
-        return;
-    }
-
-    // 只有在成功的情况下才设置完成状态
-    isTranslating.value = false;
-    isTranslationComplete.value = true;
-    
-    // 停止时间跟踪
-    stopTimeTracking();
-};
-
-const cancelTranslation = () => {
-    cancelTranslationFlag.value = true;
-    basicTranslationAbortController.value?.abort();
-    basicTranslationAbortController.value = null;
-    isTranslating.value = false;
-    isTranslationComplete.value = false;
-    showOperationNotice({ type: 'info', title: '已取消基础翻译', message: '当前基础信息翻译已停止。' });
-};
-
-const closeBatchTranslateModal = () => {
-    showBatchTranslateModal.value = false;
-    // 重置状态
-    isTranslating.value = false;
-    isTranslationComplete.value = false;
-    isTranslationError.value = false;
-    canRetryTranslation.value = false;
-    translationErrors.value = [];
-    cancelTranslationFlag.value = false;
-    
-    // 确保停止时间跟踪
-    stopTimeTracking();
-};
-
 // 世界书批量翻译函数
 const selectAllBookEntries = () => {
     if (editableData.value.book_entries) {
@@ -972,17 +720,6 @@ const selectAllBookEntries = () => {
 
 const deselectAllBookEntries = () => {
     selectedBookEntries.value = [];
-};
-
-// 备选问候语全选/取消
-const selectAllAlternateGreetings = () => {
-    const count = Array.isArray(editableData.value?.alternate_greetings) ? editableData.value.alternate_greetings.length : 0;
-    selectedAlternateGreetings.value = new Array(count).fill(true);
-};
-
-const deselectAllAlternateGreetings = () => {
-    const count = Array.isArray(editableData.value?.alternate_greetings) ? editableData.value.alternate_greetings.length : 0;
-    selectedAlternateGreetings.value = new Array(count).fill(false);
 };
 
 const startBookBatchTranslation = async () => {
@@ -1665,32 +1402,6 @@ const retryAllFailedBookBatches = async () => {
     }
     
     console.log('🎉 所有失败批次重试完成');
-};
-
-// 取消高级设置翻译
-const cancelAdvancedTranslation = () => {
-    cancelAdvancedTranslationFlag.value = true;
-    advancedTranslationAbortController.value?.abort();
-    advancedTranslationAbortController.value = null;
-    isAdvancedTranslating.value = false;
-    isAdvancedTranslationComplete.value = false;
-    showOperationNotice({ type: 'info', title: '已取消高级设置翻译', message: '当前高级设置翻译已停止。' });
-};
-
-// 关闭高级设置批量翻译模态框
-const closeAdvancedBatchTranslateModal = () => {
-    showAdvancedBatchTranslateModal.value = false;
-    // 重置状态
-    isAdvancedTranslating.value = false;
-    isAdvancedTranslationComplete.value = false;
-    isAdvancedTranslationError.value = false;
-    canRetryAdvancedTranslation.value = false;
-    advancedTranslationErrors.value = [];
-    cancelAdvancedTranslationFlag.value = false;
-    selectedAlternateGreetings.value = [];
-    
-    // 确保停止时间跟踪
-    stopTimeTracking();
 };
 
 </script>
