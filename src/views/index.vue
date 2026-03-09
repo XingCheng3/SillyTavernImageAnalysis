@@ -283,20 +283,15 @@ import { useAppStore } from '@/stores/app';
 import { storeToRefs } from 'pinia';
 import CharacterCardParser, { CharacterCardUtils } from '@/utils/characterCardParser';
 import { getAdvancedFieldDisplayName } from '@/utils/translationDisplayNames';
-import {
-    buildEditableCharacterData,
-    createEmptyBookEntry,
-    createEmptyCharacterBook,
-    detectCharacterSpec,
-    hasEditableCharacterBook,
-    isV3Spec,
-} from '@/utils/editorCardAdapter';
 import { useStreamTranslation } from '@/composables/useStreamTranslation';
 import { useOperationFeedback } from '@/composables/useOperationFeedback';
 import { useGlobalReplace } from '@/composables/useGlobalReplace';
 import { useCharacterExport } from '@/composables/useCharacterExport';
 import { useErrorDetails } from '@/composables/useErrorDetails';
 import { useTranslationCompare } from '@/composables/useTranslationCompare';
+import { useSnapshotHistory } from '@/composables/useSnapshotHistory';
+import { useTranslationTiming } from '@/composables/useTranslationTiming';
+import { useCharacterEditor } from '@/composables/useCharacterEditor';
 import { splitIntoBatches, buildBookTranslationTags, BatchState } from '@/utils/batchTranslationHelper';
 
 const appStore = useAppStore();
@@ -356,9 +351,6 @@ const basicTranslationAbortController = ref(null);
 
 const isTranslationError = ref(false); // 翻译失败状态
 const canRetryTranslation = ref(false); // 是否可以重试
-const translationStartTime = ref(null); // 翻译开始时间
-const currentTime = ref(new Date()); // 当前时间
-let timeInterval = null; // 时间更新定时器
 
 // 世界书批量翻译相关变量
 const showBookBatchTranslateModal = ref(false);
@@ -377,7 +369,6 @@ const cancelBookTranslationFlag = ref(false);
 const isBookTranslationError = ref(false); // 世界书翻译失败状态
 const canRetryBookTranslation = ref(false); // 是否可以重试世界书翻译
 const selectedBookEntries = ref([]);
-const bookTranslationStartTime = ref(null); // 世界书翻译开始时间
 
 // 世界书流式翻译和分批支持
 const bookBatchTranslateModalRef = ref(null); // 模态框引用
@@ -409,7 +400,6 @@ const cancelAdvancedTranslationFlag = ref(false);
 const advancedTranslationAbortController = ref(null);
 const isAdvancedTranslationError = ref(false);
 const canRetryAdvancedTranslation = ref(false);
-const advancedTranslationStartTime = ref(null);
 // 备选问候语分条目勾选
 const selectedAlternateGreetings = ref([]);
 
@@ -433,6 +423,58 @@ const {
     clearOperationNotice,
     showOperationNotice,
 } = useOperationFeedback();
+
+const {
+    translationStartTime,
+    bookTranslationStartTime,
+    advancedTranslationStartTime,
+    currentTime,
+    startTimeTracking,
+    startBookTimeTracking,
+    startAdvancedTimeTracking,
+    stopTimeTracking,
+    formattedCurrentTime,
+    formattedStartTime,
+    formattedBookStartTime,
+    formattedAdvancedStartTime,
+    translationDuration,
+    bookTranslationDuration,
+    advancedTranslationDuration,
+} = useTranslationTiming();
+
+const {
+    snapshots,
+    snapshotCursor,
+    snapshotMeta,
+    canUndoSnapshot,
+    canRestoreInitialSnapshot,
+    pushSnapshot,
+    resetSnapshots,
+    saveManualSnapshot,
+    undoLastSnapshot,
+    restoreInitialSnapshot,
+} = useSnapshotHistory({
+    editableData,
+    showOperationNotice,
+});
+
+const {
+    initEditableData,
+    createCharacterBook,
+    addAlternateGreeting,
+    removeAlternateGreeting,
+    addBookEntry,
+    removeBookEntry,
+    updateEntryKeys,
+    isV3Card,
+    hasCharacterBook,
+    getSpecVersion,
+} = useCharacterEditor({
+    characterData,
+    editableData,
+    pushSnapshot,
+    resetSnapshots,
+});
 
 const {
     showGlobalReplaceModal,
@@ -520,70 +562,6 @@ const hasBookSelections = computed(() => {
     return hasFields && hasEntries;
 });
 
-// 时间格式化计算属性
-const formattedCurrentTime = computed(() => {
-    return currentTime.value.toLocaleTimeString('zh-CN', { 
-        hour12: false,
-        hour: '2-digit',
-        minute: '2-digit',
-        second: '2-digit'
-    });
-});
-
-const formattedStartTime = computed(() => {
-    if (!translationStartTime.value) return '';
-    return translationStartTime.value.toLocaleTimeString('zh-CN', { 
-        hour12: false,
-        hour: '2-digit',
-        minute: '2-digit',
-        second: '2-digit'
-    });
-});
-
-const formattedBookStartTime = computed(() => {
-    if (!bookTranslationStartTime.value) return '';
-    return bookTranslationStartTime.value.toLocaleTimeString('zh-CN', { 
-        hour12: false,
-        hour: '2-digit',
-        minute: '2-digit',
-        second: '2-digit'
-    });
-});
-
-const formattedAdvancedStartTime = computed(() => {
-    if (!advancedTranslationStartTime.value) return '';
-    return advancedTranslationStartTime.value.toLocaleTimeString('zh-CN', { 
-        hour12: false,
-        hour: '2-digit',
-        minute: '2-digit',
-        second: '2-digit'
-    });
-});
-
-const translationDuration = computed(() => {
-    if (!translationStartTime.value) return '';
-    const duration = Math.floor((currentTime.value - translationStartTime.value) / 1000);
-    const minutes = Math.floor(duration / 60);
-    const seconds = duration % 60;
-    return `${minutes}:${seconds.toString().padStart(2, '0')}`;
-});
-
-const bookTranslationDuration = computed(() => {
-    if (!bookTranslationStartTime.value) return '';
-    const duration = Math.floor((currentTime.value - bookTranslationStartTime.value) / 1000);
-    const minutes = Math.floor(duration / 60);
-    const seconds = duration % 60;
-    return `${minutes}:${seconds.toString().padStart(2, '0')}`;
-});
-
-const advancedTranslationDuration = computed(() => {
-    if (!advancedTranslationStartTime.value) return '';
-    const duration = Math.floor((currentTime.value - advancedTranslationStartTime.value) / 1000);
-    const minutes = Math.floor(duration / 60);
-    const seconds = duration % 60;
-    return `${minutes}:${seconds.toString().padStart(2, '0')}`;
-});
-
 const hasAdvancedSelectedFields = computed(() => {
     // 非问候语字段只要勾选任意一个即可
     const anyNonGreeting = advancedTranslateFields.system_prompt || advancedTranslateFields.post_history_instructions || advancedTranslateFields.creator_notes;
@@ -661,150 +639,6 @@ const handleFileUpload = async (event) => {
     }
 };
 
-const snapshots = ref([]);
-const snapshotCursor = ref(-1);
-const snapshotMeta = reactive({
-    currentLabel: '',
-    initialLabel: ''
-});
-const MAX_SNAPSHOTS = 20;
-
-const cloneDeep = (value) => JSON.parse(JSON.stringify(value));
-
-const canUndoSnapshot = computed(() => snapshotCursor.value > 0 && snapshots.value.length > 0);
-const canRestoreInitialSnapshot = computed(() => snapshots.value.length > 0 && snapshotCursor.value !== 0);
-
-const applySnapshotState = (snapshot) => {
-    editableData.value = reactive(cloneDeep(snapshot.data));
-    snapshotMeta.currentLabel = snapshot.label;
-};
-
-function pushSnapshot(label = '手动快照') {
-    if (!editableData.value) return;
-
-    const nextSnapshots = snapshots.value.slice(0, snapshotCursor.value + 1);
-    nextSnapshots.push({
-        label,
-        createdAt: Date.now(),
-        data: cloneDeep(editableData.value)
-    });
-
-    if (nextSnapshots.length > MAX_SNAPSHOTS) {
-        nextSnapshots.shift();
-    }
-
-    snapshots.value = nextSnapshots;
-    snapshotCursor.value = snapshots.value.length - 1;
-    snapshotMeta.currentLabel = label;
-    if (!snapshotMeta.initialLabel) {
-        snapshotMeta.initialLabel = label;
-    }
-}
-
-const saveManualSnapshot = () => {
-    pushSnapshot(`手动快照 ${new Date().toLocaleTimeString('zh-CN', { hour12: false })}`);
-    showOperationNotice({
-        type: 'success',
-        title: '快照已保存',
-        message: snapshotMeta.currentLabel || '当前编辑状态已保存为快照。',
-    });
-};
-
-const undoLastSnapshot = () => {
-    if (!canUndoSnapshot.value) return;
-    snapshotCursor.value -= 1;
-    applySnapshotState(snapshots.value[snapshotCursor.value]);
-};
-
-const restoreInitialSnapshot = () => {
-    if (!snapshots.value.length) return;
-    snapshotCursor.value = 0;
-    applySnapshotState(snapshots.value[0]);
-};
-
-// 初始化可编辑数据
-const initEditableData = () => {
-    if (!characterData.value) return;
-
-    console.log('初始化可编辑数据开始...');
-    console.log('角色卡原始数据:', characterData.value);
-
-    const normalizedEditableData = buildEditableCharacterData(characterData.value);
-    editableData.value = reactive(normalizedEditableData);
-
-    snapshots.value = [];
-    snapshotCursor.value = -1;
-    snapshotMeta.currentLabel = '';
-    snapshotMeta.initialLabel = '';
-    pushSnapshot('初始导入');
-
-    console.log('初始化了', editableData.value.book_entries.length, '个世界书条目');
-    console.log('最终可编辑数据:', editableData.value);
-};
-
-// 创建世界书
-const createCharacterBook = () => {
-    pushSnapshot('创建世界书');
-    if (!editableData.value.character_book) {
-        editableData.value.character_book = createEmptyCharacterBook({ name: '新建世界书' });
-    }
-
-    if (!Array.isArray(editableData.value.book_entries)) {
-        editableData.value.book_entries = [];
-    }
-};
-
-const addAlternateGreeting = () => {
-    pushSnapshot('新增备选问候语');
-    if (!editableData.value.alternate_greetings) {
-        editableData.value.alternate_greetings = [];
-    }
-    editableData.value.alternate_greetings = [...editableData.value.alternate_greetings, ''];
-};
-
-const removeAlternateGreeting = (index) => {
-    pushSnapshot('删除备选问候语');
-    editableData.value.alternate_greetings = editableData.value.alternate_greetings.filter((_, i) => i !== index);
-};
-
-const addBookEntry = () => {
-    pushSnapshot('新增世界书条目');
-    const newIndex = editableData.value.book_entries ? editableData.value.book_entries.length : 0;
-    editableData.value.book_entries = [...(editableData.value.book_entries || []), createEmptyBookEntry(newIndex)];
-};
-
-const removeBookEntry = (index) => {
-    pushSnapshot('删除世界书条目');
-    editableData.value.book_entries = editableData.value.book_entries.filter((_, i) => i !== index);
-};
-
-const updateEntryKeys = (entry) => {
-    if (!entry.keysText) {
-        entry.keys = [];
-        return;
-    }
-    
-    // 将关键词文本分割为数组并去除前后空格
-    const keyArray = entry.keysText.split(',');
-    entry.keys = keyArray.map(k => k.trim()).filter(Boolean);
-    
-    console.log('更新后的关键词:', entry.keys);
-};
-
-const isV3Card = () => {
-    return isV3Spec(detectCharacterSpec(characterData.value));
-};
-
-// 检查是否有世界书
-const hasCharacterBook = () => {
-    return hasEditableCharacterBook(editableData.value);
-};
-
-// 获取角色卡规格版本
-function getSpecVersion() {
-    return characterData.value ? detectCharacterSpec(characterData.value) : '未知';
-}
-
 const {
     exportCharacterCard,
 } = useCharacterExport({
@@ -819,51 +653,6 @@ const {
 const handleSaveSettings = (settings) => {
     // This event is kept for now, but settings are managed by Pinia
     console.log('API settings saved via modal event:', settings);
-};
-
-// 时间管理函数
-const startTimeTracking = () => {
-    translationStartTime.value = new Date();
-    currentTime.value = new Date();
-    
-    // 每秒更新当前时间
-    timeInterval = setInterval(() => {
-        currentTime.value = new Date();
-    }, 1000);
-};
-
-const startBookTimeTracking = () => {
-    bookTranslationStartTime.value = new Date();
-    currentTime.value = new Date();
-    
-    // 如果还没有时间更新器，创建一个
-    if (!timeInterval) {
-        timeInterval = setInterval(() => {
-            currentTime.value = new Date();
-        }, 1000);
-    }
-};
-
-const startAdvancedTimeTracking = () => {
-    advancedTranslationStartTime.value = new Date();
-    currentTime.value = new Date();
-    
-    // 如果还没有时间更新器，创建一个
-    if (!timeInterval) {
-        timeInterval = setInterval(() => {
-            currentTime.value = new Date();
-        }, 1000);
-    }
-};
-
-const stopTimeTracking = () => {
-    if (timeInterval) {
-        clearInterval(timeInterval);
-        timeInterval = null;
-    }
-    translationStartTime.value = null;
-    bookTranslationStartTime.value = null;
-    advancedTranslationStartTime.value = null;
 };
 
 // 使用拆分后的通用辅助函数
