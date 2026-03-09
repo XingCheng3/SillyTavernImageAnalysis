@@ -19,6 +19,14 @@
             </div>
         </div>
 
+        <NotificationBanner
+            :show="operationNotice.visible"
+            :type="operationNotice.type"
+            :title="operationNotice.title"
+            :message="operationNotice.message"
+            @close="clearOperationNotice"
+        />
+
         <div class="upload-area">
             <label for="file-upload" class="upload-button">
                 选择角色卡（PNG / JSON）
@@ -257,7 +265,7 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed, onMounted, watch } from 'vue';
+import { ref, reactive, computed, onMounted, onBeforeUnmount, watch } from 'vue';
 import BasicInfoTab from '@/components/tabs/BasicInfoTab.vue';
 import AdvancedSettingsTab from '@/components/tabs/AdvancedSettingsTab.vue';
 import WorldBookTab from '@/components/tabs/WorldBookTab.vue';
@@ -272,6 +280,7 @@ import BookBatchTranslateModal from '@/components/modals/BookBatchTranslateModal
 import AdvancedBatchTranslateModal from '@/components/modals/AdvancedBatchTranslateModal.vue';
 import GlobalReplaceModal from '@/components/modals/GlobalReplaceModal.vue';
 import ErrorModal from '@/components/modals/ErrorModal.vue';
+import NotificationBanner from '@/components/common/NotificationBanner.vue';
 import { useAppStore } from '@/stores/app';
 import { storeToRefs } from 'pinia';
 import CharacterCardParser, { CharacterCardUtils } from '@/utils/characterCardParser';
@@ -297,7 +306,13 @@ const isApiReady = computed(() => {
 // 检查API配置并显示友好提示
 const checkAndPromptApiConfig = () => {
     if (!apiSettings.value.url || !apiSettings.value.model) {
-        alert('请先在设置中配置API信息：\n\n1. 点击右上角"设置"按钮\n2. 填写API URL和选择模型\n3. 保存设置后即可使用翻译功能');
+        showSettingsModal.value = true;
+        showOperationNotice({
+            type: 'warning',
+            title: '请先配置 API',
+            message: '已为你打开设置面板，请先填写 API URL、模型与密钥。',
+            duration: 6000,
+        });
         return false;
     }
     return true;
@@ -450,6 +465,35 @@ const openErrorModal = (payload = {}) => {
 const closeErrorModal = () => {
     showErrorModal.value = false;
 };
+
+const clearOperationNotice = () => {
+    operationNotice.visible = false;
+    operationNotice.type = 'info';
+    operationNotice.title = '';
+    operationNotice.message = '';
+    if (operationNoticeTimer) {
+        clearTimeout(operationNoticeTimer);
+        operationNoticeTimer = null;
+    }
+};
+
+const showOperationNotice = ({ type = 'info', title = '提示', message = '', duration = 5000 }) => {
+    clearOperationNotice();
+    operationNotice.visible = true;
+    operationNotice.type = type;
+    operationNotice.title = title;
+    operationNotice.message = message;
+
+    if (duration > 0) {
+        operationNoticeTimer = setTimeout(() => {
+            clearOperationNotice();
+        }, duration);
+    }
+};
+
+onBeforeUnmount(() => {
+    clearOperationNotice();
+});
 
 // 计算属性
 const hasSelectedFields = computed(() => {
@@ -625,6 +669,13 @@ const handleFileUpload = async (event) => {
 
 const exportError = ref('');
 const exportSuccess = ref('');
+const operationNotice = reactive({
+    visible: false,
+    type: 'info',
+    title: '',
+    message: ''
+});
+let operationNoticeTimer = null;
 const snapshots = ref([]);
 const snapshotCursor = ref(-1);
 const snapshotMeta = reactive({
@@ -768,7 +819,11 @@ const getSpecVersion = () => {
 // 导出角色卡
 const exportCharacterCard = async () => {
     if (!characterData.value || !editableData.value) {
-        alert('没有角色卡数据可以导出！');
+        showOperationNotice({
+            type: 'warning',
+            title: '没有可导出的角色卡',
+            message: '请先导入角色卡，再进行导出。',
+        });
         return;
     }
 
@@ -805,6 +860,11 @@ const exportCharacterCard = async () => {
         CharacterCardUtils.downloadPNG(newPngBytes, filename);
         
         exportSuccess.value = '角色卡导出成功！';
+        showOperationNotice({
+            type: 'success',
+            title: '导出成功',
+            message: `已生成并下载 ${filename}`,
+        });
         console.log('角色卡导出成功');
         
         // 导出成功后，验证数据是否仍然存在
@@ -819,6 +879,7 @@ const exportCharacterCard = async () => {
         console.log('characterData.value存在:', !!characterData.value);
         console.log('editableData.value存在:', !!editableData.value);
         exportError.value = `导出失败: ${err.message}`;
+        showOperationNotice({ type: 'error', title: '导出失败', message: err.message, duration: 7000 });
     }
 };
 
@@ -859,7 +920,11 @@ const showErrorDetails = (errorDetails) => {
         }
     });
     
-    alert(message);
+    openErrorModal({
+        title: '错误详情',
+        message: errorDetails?.message || '发生了一次需要关注的错误。',
+        details: message,
+    });
 };
 
 // 时间管理函数
@@ -982,7 +1047,11 @@ const startBatchTranslation = async () => {
     });
     
     if (fieldsToTranslate.length === 0) {
-        alert('没有可翻译的内容！请确保选中的字段有文本内容。');
+        showOperationNotice({
+            type: 'warning',
+            title: '没有可翻译内容',
+            message: '请先勾选并填写有文本内容的基础字段。',
+        });
         isTranslating.value = false;
         return;
     }
@@ -1220,6 +1289,7 @@ const cancelTranslation = () => {
     basicTranslationAbortController.value = null;
     isTranslating.value = false;
     isTranslationComplete.value = false;
+    showOperationNotice({ type: 'info', title: '已取消基础翻译', message: '当前基础信息翻译已停止。' });
 };
 
 const closeBatchTranslateModal = () => {
@@ -1295,7 +1365,11 @@ const startBookBatchTranslation = async () => {
         .filter(index => index !== -1);
     
     if (selectedIndices.length === 0) {
-        alert('请至少选择一个条目进行翻译！');
+        showOperationNotice({
+            type: 'warning',
+            title: '请选择世界书条目',
+            message: '至少选择一个条目后才能开始世界书翻译。',
+        });
         isBookTranslating.value = false;
         return;
     }
@@ -1307,7 +1381,11 @@ const startBookBatchTranslation = async () => {
     if (bookTranslateFields.content) fieldsToTranslate.push('content');
     
     if (fieldsToTranslate.length === 0) {
-        alert('请至少选择一个字段进行翻译！');
+        showOperationNotice({
+            type: 'warning',
+            title: '请选择翻译字段',
+            message: '至少选择一个世界书字段后才能开始翻译。',
+        });
         isBookTranslating.value = false;
         return;
     }
@@ -1750,6 +1828,7 @@ const cancelBookTranslation = () => {
     cancelBookStream();
     bookRequestAbortControllers.value.forEach(controller => controller.abort());
     bookRequestAbortControllers.value = [];
+    showOperationNotice({ type: 'info', title: '已取消世界书翻译', message: '未完成的翻译批次已停止。' });
 };
 
 const closeBookBatchTranslateModal = () => {
@@ -1783,7 +1862,11 @@ const retryBookBatch = async (batchIndex) => {
     // 获取该批次的条目索引
     const batchIndices = bookBatchState.getBatchData(batchIndex);
     if (!batchIndices || batchIndices.length === 0) {
-        alert('无法获取该批次的数据');
+        showOperationNotice({
+            type: 'warning',
+            title: '无法获取批次数据',
+            message: '这个批次的上下文数据不存在，请重新发起翻译。',
+        });
         return;
     }
     
@@ -2028,10 +2111,20 @@ const applySelectedTranslations = (selectedItems) => {
         
         // 不要立即关闭批量翻译模态框，让用户看到完成状态
         // closeBatchTranslateModal();
+        showOperationNotice({
+            type: 'success',
+            title: '基础翻译已应用',
+            message: `已应用 ${selectedItems.length} 个基础字段的翻译结果。`,
+        });
         
     } catch (error) {
         console.error('应用翻译结果失败:', error);
-        alert('应用翻译结果时发生错误：' + error.message);
+        showOperationNotice({
+            type: 'error',
+            title: '应用基础翻译失败',
+            message: error.message,
+            duration: 7000,
+        });
     }
 };
 
@@ -2046,7 +2139,11 @@ const previewTranslationChanges = (selectedItems) => {
         message += `   译文: ${item.translated.substring(0, 50)}${item.translated.length > 50 ? '...' : ''}\n\n`;
     });
     
-    alert(message);
+    openErrorModal({
+        title: '翻译变更预览',
+        message: '以下是基础字段翻译即将应用的内容。',
+        details: message,
+    });
 };
 
 // 字段显示名称映射
@@ -2176,10 +2273,20 @@ const applySelectedBookTranslations = (selectedItems) => {
         
         // 不要立即关闭世界书批量翻译模态框，让用户看到完成状态
         // closeBookBatchTranslateModal();
+        showOperationNotice({
+            type: 'success',
+            title: '世界书翻译已应用',
+            message: `已应用 ${selectedItems.length} 项世界书修改。`,
+        });
         
     } catch (error) {
         console.error('应用世界书翻译结果失败:', error);
-        alert('应用翻译结果时发生错误：' + error.message);
+        showOperationNotice({
+            type: 'error',
+            title: '应用世界书翻译失败',
+            message: error.message,
+            duration: 7000,
+        });
     }
 };
 
@@ -2211,7 +2318,11 @@ const handleComparePreview = (selectedItems) => {
             message += `   译文: ${item.translated.substring(0, 50)}${item.translated.length > 50 ? '...' : ''}\n\n`;
         });
         
-        alert(message);
+        openErrorModal({
+            title: '翻译变更预览',
+            message: '以下是世界书翻译即将应用的内容。',
+            details: message,
+        });
     } else if (currentType === 'advanced') {
         // 高级设置预览
         let message = '将要应用以下翻译更改：\n\n';
@@ -2222,7 +2333,11 @@ const handleComparePreview = (selectedItems) => {
             message += `   译文: ${item.translated.substring(0, 50)}${item.translated.length > 50 ? '...' : ''}\n\n`;
         });
         
-        alert(message);
+        openErrorModal({
+            title: '翻译变更预览',
+            message: '以下是高级设置翻译即将应用的内容。',
+            details: message,
+        });
     }
 };
 
@@ -2245,7 +2360,11 @@ const startAdvancedBatchTranslation = async () => {
     
     // 检查是否有选中的字段
     if (!hasAdvancedSelectedFields.value) {
-        alert('请至少选择一个要翻译的字段！');
+        showOperationNotice({
+            type: 'warning',
+            title: '请选择高级设置字段',
+            message: '至少选择一个高级设置字段后才能开始翻译。',
+        });
         return;
     }
     
@@ -2298,7 +2417,11 @@ const startAdvancedBatchTranslation = async () => {
         });
         
         if (fieldsToTranslate.length === 0) {
-            alert('没有找到需要翻译的内容！');
+            showOperationNotice({
+                type: 'warning',
+                title: '没有可翻译内容',
+                message: '当前所选高级设置字段没有可用文本。',
+            });
             isAdvancedTranslating.value = false;
             stopTimeTracking();
             return;
@@ -2613,10 +2736,20 @@ const applySelectedAdvancedTranslations = (selectedItems) => {
         
         console.log('已应用选中的高级设置翻译结果');
         showCompareModal.value = false;
+        showOperationNotice({
+            type: 'success',
+            title: '高级设置翻译已应用',
+            message: `已应用 ${selectedItems.length} 个高级字段的翻译结果。`,
+        });
         
     } catch (error) {
         console.error('应用高级设置翻译结果失败:', error);
-        alert('应用翻译结果时发生错误：' + error.message);
+        showOperationNotice({
+            type: 'error',
+            title: '应用高级设置翻译失败',
+            message: error.message,
+            duration: 7000,
+        });
     }
 };
 
@@ -2638,6 +2771,7 @@ const cancelAdvancedTranslation = () => {
     advancedTranslationAbortController.value = null;
     isAdvancedTranslating.value = false;
     isAdvancedTranslationComplete.value = false;
+    showOperationNotice({ type: 'info', title: '已取消高级设置翻译', message: '当前高级设置翻译已停止。' });
 };
 
 // 关闭高级设置批量翻译模态框
@@ -2794,7 +2928,7 @@ const checkOccurrences = () => {
 
 const executeGlobalReplace = () => {
     if (!replaceForm.originalText || !editableData.value) {
-        alert('请填写原文本！');
+        showOperationNotice({ type: 'warning', title: '替换条件不完整', message: '请先填写要查找的原文本。' });
         return;
     }
     
@@ -2859,7 +2993,7 @@ const executeGlobalReplace = () => {
         });
     }
     
-    alert(`替换完成！共替换了 ${totalReplaced} 处文本。`);
+    showOperationNotice({ type: 'success', title: '全局替换完成', message: `共替换了 ${totalReplaced} 处文本。` });
     
     // 重置表单并关闭模态框
     replaceForm.originalText = '';
