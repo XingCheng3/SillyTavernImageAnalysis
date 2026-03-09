@@ -265,7 +265,7 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed, onMounted, onBeforeUnmount, watch } from 'vue';
+import { ref, reactive, computed, onMounted, watch } from 'vue';
 import BasicInfoTab from '@/components/tabs/BasicInfoTab.vue';
 import AdvancedSettingsTab from '@/components/tabs/AdvancedSettingsTab.vue';
 import WorldBookTab from '@/components/tabs/WorldBookTab.vue';
@@ -293,6 +293,7 @@ import {
     isV3Spec,
 } from '@/utils/editorCardAdapter';
 import { useStreamTranslation } from '@/composables/useStreamTranslation';
+import { useOperationFeedback } from '@/composables/useOperationFeedback';
 import { splitIntoBatches, buildBookTranslationTags, BatchState } from '@/utils/batchTranslationHelper';
 
 const appStore = useAppStore();
@@ -439,61 +440,15 @@ const finalTranslationInfo = ref({
     modelName: ''
 });
 
-// 统一错误提示模态框状态
-const showErrorModal = ref(false);
-const errorModal = reactive({
-    title: '提示',
-    code: '',
-    message: '',
-    status: null,
-    statusText: '',
-    details: null,
-    suggestions: []
-});
-
-const openErrorModal = (payload = {}) => {
-    errorModal.title = payload.title || '提示';
-    errorModal.code = payload.code || '';
-    errorModal.message = payload.message || '';
-    errorModal.status = payload.status ?? null;
-    errorModal.statusText = payload.statusText || '';
-    errorModal.details = payload.details ?? null;
-    errorModal.suggestions = Array.isArray(payload.suggestions) ? payload.suggestions : [];
-    showErrorModal.value = true;
-};
-
-const closeErrorModal = () => {
-    showErrorModal.value = false;
-};
-
-const clearOperationNotice = () => {
-    operationNotice.visible = false;
-    operationNotice.type = 'info';
-    operationNotice.title = '';
-    operationNotice.message = '';
-    if (operationNoticeTimer) {
-        clearTimeout(operationNoticeTimer);
-        operationNoticeTimer = null;
-    }
-};
-
-const showOperationNotice = ({ type = 'info', title = '提示', message = '', duration = 5000 }) => {
-    clearOperationNotice();
-    operationNotice.visible = true;
-    operationNotice.type = type;
-    operationNotice.title = title;
-    operationNotice.message = message;
-
-    if (duration > 0) {
-        operationNoticeTimer = setTimeout(() => {
-            clearOperationNotice();
-        }, duration);
-    }
-};
-
-onBeforeUnmount(() => {
-    clearOperationNotice();
-});
+const {
+    showErrorModal,
+    errorModal,
+    openErrorModal,
+    closeErrorModal,
+    operationNotice,
+    clearOperationNotice,
+    showOperationNotice,
+} = useOperationFeedback();
 
 // 计算属性
 const hasSelectedFields = computed(() => {
@@ -669,13 +624,6 @@ const handleFileUpload = async (event) => {
 
 const exportError = ref('');
 const exportSuccess = ref('');
-const operationNotice = reactive({
-    visible: false,
-    type: 'info',
-    title: '',
-    message: ''
-});
-let operationNoticeTimer = null;
 const snapshots = ref([]);
 const snapshotCursor = ref(-1);
 const snapshotMeta = reactive({
