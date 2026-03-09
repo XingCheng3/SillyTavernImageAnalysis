@@ -295,7 +295,16 @@ import { useBasicTranslation } from '@/composables/useBasicTranslation';
 import { useAdvancedTranslationActions } from '@/composables/useAdvancedTranslationActions';
 import { useWorldBookActions } from '@/composables/useWorldBookActions';
 import { splitIntoBatches, buildBookTranslationTags, BatchState } from '@/utils/batchTranslationHelper';
-import { getSelectedBookIndices, getBookFieldsToTranslate, countBookTranslationItems, collectBookBatchResults } from '@/utils/worldBookTranslationWorkflow';
+import {
+    buildWorldBookSystemPrompt,
+    collectBookBatchResults,
+    collectStreamBatchResults,
+    countBookTranslationItems,
+    getBookFieldsToTranslate,
+    getSelectedBookIndices,
+    normalizeWorldBookMissingItems,
+    parseWorldBookBatchResults,
+} from '@/utils/worldBookTranslationWorkflow';
 
 const appStore = useAppStore();
 const { apiSettings, translationConfig } = storeToRefs(appStore);
@@ -865,7 +874,7 @@ const startBookBatchTranslation = async () => {
                         apiUrl: apiSettings.value.url,
                         apiKey: apiSettings.value.key,
                         model: apiSettings.value.model,
-                        systemPrompt: buildTranslationPrompt(translationConfig.value, true) + '\nFor keyword lists separated by commas, translate each keyword and keep the comma separation.',
+                        systemPrompt: buildWorldBookSystemPrompt(translationConfig.value, buildTranslationPrompt),
                         userContent: taggedText,
                         tagMap: fieldMap,
                         onProgress: (progressData) => {
@@ -897,32 +906,16 @@ const startBookBatchTranslation = async () => {
                     }
                     
                     // 解析流式翻译结果
-                    const batchResults = {};
-                    const missingTags = [];
-                    const expectedTags = Object.keys(fieldMap);
-                    
-                    for (const [tag, content] of Object.entries(result.results)) {
-                        const info = fieldMap[tag];
-                        if (info) {
-                            if (!batchResults[info.entryIndex]) {
-                                batchResults[info.entryIndex] = {};
-                            }
-                            batchResults[info.entryIndex][info.field] = content;
-                        }
-                    }
-                    
-                    // 检查缺失的标签
-                    for (const tag of expectedTags) {
-                        if (!result.results[tag]) {
-                            const info = fieldMap[tag];
-                            const fieldName = info.field === 'name' ? '名称' : 
-                                            info.field === 'keywords' ? '关键词' : '内容';
-                            missingTags.push({
-                                field: `${info.entryName} - ${fieldName}`,
-                                tag: tag
-                            });
-                        }
-                    }
+                    const batchResults = collectStreamBatchResults({
+                        fieldMap,
+                        streamResults: result.results,
+                    });
+                    const { missingTags } = parseWorldBookBatchResults({
+                        fieldMap,
+                        translatedText: Object.keys(result.results)
+                            .map(tag => `<${tag}>${result.results[tag]}</${tag}>`)
+                            .join('\n\n'),
+                    });
                     
                     // 标记批次成功
                     bookBatchState.setBatchStatus(batchIndex, 'success', { results: batchResults });
@@ -930,14 +923,11 @@ const startBookBatchTranslation = async () => {
                     
                     // 记录缺失标签
                     if (missingTags.length > 0) {
-                        missingTags.forEach(({ field, tag }) => {
-                            const missingItem = {
-                                field: `批次${batchIndex + 1} - ${field}`,
-                                tag,
-                            };
-                            bookTranslationMissingTags.value.push(missingItem);
+                        const missingItems = normalizeWorldBookMissingItems({ batchIndex, missingTags });
+                        bookTranslationMissingTags.value.push(...missingItems);
+                        missingItems.forEach(({ field, tag }) => {
                             bookTranslationErrors.value.push({
-                                field: missingItem.field,
+                                field,
                                 message: `标签 ${tag} 在返回结果中丢失`
                             });
                         });
@@ -961,7 +951,7 @@ const startBookBatchTranslation = async () => {
                 messages: [
                     { 
                         role: 'system', 
-                                    content: buildTranslationPrompt(translationConfig.value, true) + '\nFor keyword lists separated by commas, translate each keyword and keep the comma separation.'
+                                    content: buildWorldBookSystemPrompt(translationConfig.value, buildTranslationPrompt)
                     },
                     { role: 'user', content: taggedText }
                 ],
@@ -990,31 +980,11 @@ const startBookBatchTranslation = async () => {
                     console.log(`批次 ${batchIndex + 1} API返回结果:`, translatedText.substring(0, 200));
 
                     // 解析当前批次的翻译结果
-                    const batchResults = {};
-        const missingTags = [];
-        const expectedTags = Object.keys(fieldMap);
-        
-        for (const [tag, info] of Object.entries(fieldMap)) {
-            const regex = new RegExp(`<${tag}>([\\s\\S]*?)<\\/${tag}>`, 'i');
-            const match = translatedText.match(regex);
-            
-            if (match && match[1]) {
-                            if (!batchResults[info.entryIndex]) {
-                                batchResults[info.entryIndex] = {};
-                }
-                            batchResults[info.entryIndex][info.field] = match[1].trim();
-                bookTranslatedCount.value++;
-                            console.log(`✓ 条目${info.entryIndex} ${info.field}`);
-        } else {
-                const entryName = editableData.value.book_entries[info.entryIndex].name || `条目 ${info.entryIndex + 1}`;
-                const fieldName = info.field === 'name' ? '名称' : 
-                                info.field === 'keywords' ? '关键词' : '内容';
-                missingTags.push({
-                    field: `${entryName} - ${fieldName}`,
-                    tag: tag
-                });
-            }
-        }
+                    const { batchResults, missingTags, expectedTags } = parseWorldBookBatchResults({
+                        fieldMap,
+                        translatedText,
+                    });
+                    bookTranslatedCount.value += Object.values(batchResults).reduce((sum, fields) => sum + Object.keys(fields).length, 0);
 
                     console.log('普通翻译 - 世界书翻译结果:', batchResults);
                     console.log('普通翻译 - 丢失的标签:', missingTags);
@@ -1037,14 +1007,11 @@ const startBookBatchTranslation = async () => {
 
                     // 记录丢失的标签作为错误
                     if (missingTags.length > 0) {
-                        missingTags.forEach(({ field, tag }) => {
-                            const missingItem = {
-                                field: `批次${batchIndex + 1} - ${field}`,
-                                tag,
-                            };
-                            bookTranslationMissingTags.value.push(missingItem);
+                        const missingItems = normalizeWorldBookMissingItems({ batchIndex, missingTags });
+                        bookTranslationMissingTags.value.push(...missingItems);
+                        missingItems.forEach(({ field, tag }) => {
                             bookTranslationErrors.value.push({
-                                field: missingItem.field,
+                                field,
                                 message: `标签 ${tag} 在返回结果中丢失`
                             });
                         });

@@ -40,3 +40,63 @@ export function collectBookBatchResults(bookBatchState) {
     });
     return allResults;
 }
+
+export function getBookFieldLabel(field) {
+    if (field === 'name') return '名称';
+    if (field === 'keywords') return '关键词';
+    return '内容';
+}
+
+export function buildWorldBookSystemPrompt(translationConfig, buildTranslationPrompt) {
+    return buildTranslationPrompt(translationConfig, true) + '\nFor keyword lists separated by commas, translate each keyword and keep the comma separation.';
+}
+
+export function parseWorldBookBatchResults({ fieldMap, translatedText }) {
+    const batchResults = {};
+    const missingTags = [];
+    const expectedTags = Object.keys(fieldMap);
+
+    for (const [tag, info] of Object.entries(fieldMap)) {
+        const regex = new RegExp(`<${tag}>([\\s\\S]*?)<\\/${tag}>`, 'i');
+        const match = translatedText.match(regex);
+
+        if (match && match[1]) {
+            if (!batchResults[info.entryIndex]) {
+                batchResults[info.entryIndex] = {};
+            }
+            batchResults[info.entryIndex][info.field] = match[1].trim();
+        } else {
+            missingTags.push({
+                field: `${info.entryName} - ${getBookFieldLabel(info.field)}`,
+                tag,
+            });
+        }
+    }
+
+    return {
+        batchResults,
+        missingTags,
+        expectedTags,
+    };
+}
+
+export function normalizeWorldBookMissingItems({ batchIndex, missingTags }) {
+    return missingTags.map(({ field, tag }) => ({
+        field: `批次${batchIndex + 1} - ${field}`,
+        tag,
+    }));
+}
+
+export function collectStreamBatchResults({ fieldMap, streamResults }) {
+    const batchResults = {};
+    for (const [tag, content] of Object.entries(streamResults)) {
+        const info = fieldMap[tag];
+        if (info) {
+            if (!batchResults[info.entryIndex]) {
+                batchResults[info.entryIndex] = {};
+            }
+            batchResults[info.entryIndex][info.field] = content;
+        }
+    }
+    return batchResults;
+}

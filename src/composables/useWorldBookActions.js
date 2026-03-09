@@ -1,3 +1,10 @@
+import {
+    buildWorldBookSystemPrompt,
+    collectStreamBatchResults,
+    getBookFieldsToTranslate,
+    parseWorldBookBatchResults,
+} from '@/utils/worldBookTranslationWorkflow';
+
 export function useWorldBookActions({
     editableData,
     selectedBookEntries,
@@ -86,10 +93,7 @@ export function useWorldBookActions({
 
         bookStreamResults.value = bookStreamResults.value.filter(item => item.batchIndex !== batchIndex);
 
-        const fieldsToTranslate = [];
-        if (bookTranslateFields.name) fieldsToTranslate.push('name');
-        if (bookTranslateFields.keywords) fieldsToTranslate.push('keywords');
-        if (bookTranslateFields.content) fieldsToTranslate.push('content');
+        const fieldsToTranslate = getBookFieldsToTranslate(bookTranslateFields);
 
         bookBatchState.setBatchStatus(batchIndex, 'translating');
 
@@ -111,7 +115,7 @@ export function useWorldBookActions({
                     apiUrl: apiSettings.value.url,
                     apiKey: apiSettings.value.key,
                     model: apiSettings.value.model,
-                    systemPrompt: buildTranslationPrompt(translationConfig.value, true) + '\nFor keyword lists separated by commas, translate each keyword and keep the comma separation.',
+                    systemPrompt: buildWorldBookSystemPrompt(translationConfig.value, buildTranslationPrompt),
                     userContent: taggedText,
                     tagMap: fieldMap,
                     onProgress: (progressData) => {
@@ -128,16 +132,10 @@ export function useWorldBookActions({
                 });
 
                 if (result.success) {
-                    const batchResults = {};
-                    for (const [tag, content] of Object.entries(result.results)) {
-                        const info = fieldMap[tag];
-                        if (info) {
-                            if (!batchResults[info.entryIndex]) {
-                                batchResults[info.entryIndex] = {};
-                            }
-                            batchResults[info.entryIndex][info.field] = content;
-                        }
-                    }
+                    const batchResults = collectStreamBatchResults({
+                        fieldMap,
+                        streamResults: result.results,
+                    });
                     bookBatchState.setBatchStatus(batchIndex, 'success', { results: batchResults });
                 } else {
                     throw new Error(result.error || '重试失败');
@@ -157,7 +155,7 @@ export function useWorldBookActions({
                         messages: [
                             {
                                 role: 'system',
-                                content: buildTranslationPrompt(translationConfig.value, true) + '\nFor keyword lists separated by commas, translate each keyword and keep the comma separation.'
+                                content: buildWorldBookSystemPrompt(translationConfig.value, buildTranslationPrompt)
                             },
                             { role: 'user', content: taggedText }
                         ],
@@ -174,19 +172,10 @@ export function useWorldBookActions({
 
                 const data = await response.json();
                 const translatedText = data.choices[0].message.content;
-                const batchResults = {};
-
-                for (const [tag, info] of Object.entries(fieldMap)) {
-                    const regex = new RegExp(`<${tag}>([\\s\\S]*?)<\\/${tag}>`, 'i');
-                    const match = translatedText.match(regex);
-
-                    if (match && match[1]) {
-                        if (!batchResults[info.entryIndex]) {
-                            batchResults[info.entryIndex] = {};
-                        }
-                        batchResults[info.entryIndex][info.field] = match[1].trim();
-                    }
-                }
+                const { batchResults } = parseWorldBookBatchResults({
+                    fieldMap,
+                    translatedText,
+                });
 
                 if (Object.keys(batchResults).length > 0) {
                     bookBatchState.setBatchStatus(batchIndex, 'success', { results: batchResults });
