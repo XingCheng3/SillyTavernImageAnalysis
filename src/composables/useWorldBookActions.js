@@ -49,6 +49,7 @@ export function useWorldBookActions({
         cancelBookStream();
         bookRequestAbortControllers.value.forEach(controller => controller.abort());
         bookRequestAbortControllers.value = [];
+        stopTimeTracking();
         showOperationNotice({ type: 'info', title: '已取消世界书翻译', message: '未完成的翻译批次已停止。' });
     };
 
@@ -64,6 +65,7 @@ export function useWorldBookActions({
         selectedBookEntries.value = [];
         bookStreamResults.value = [];
         bookRequestAbortControllers.value = [];
+        bookBatchState.init(0, []);
         stopTimeTracking();
     };
 

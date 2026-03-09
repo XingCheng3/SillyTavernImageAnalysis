@@ -278,6 +278,7 @@ export function useAdvancedTranslationActions({
         advancedTranslationAbortController.value = null;
         isAdvancedTranslating.value = false;
         isAdvancedTranslationComplete.value = false;
+        stopTimeTracking();
         showOperationNotice({ type: 'info', title: '已取消高级设置翻译', message: '当前高级设置翻译已停止。' });
     };
 
@@ -289,7 +290,10 @@ export function useAdvancedTranslationActions({
         canRetryAdvancedTranslation.value = false;
         advancedTranslationErrors.value = [];
         cancelAdvancedTranslationFlag.value = false;
+        advancedTranslationAbortController.value = null;
         selectedAlternateGreetings.value = [];
+        advancedTranslatedCount.value = 0;
+        advancedTotalToTranslate.value = 0;
         stopTimeTracking();
     };
 

@@ -99,6 +99,7 @@ export function useBasicTranslation({
                 message: '请先勾选并填写有文本内容的基础字段。',
             });
             isTranslating.value = false;
+            stopTimeTracking();
             return;
         }
 
@@ -265,6 +266,8 @@ export function useBasicTranslation({
         basicTranslationAbortController.value = null;
         isTranslating.value = false;
         isTranslationComplete.value = false;
+        currentTranslatingField.value = '';
+        stopTimeTracking();
         showOperationNotice({ type: 'info', title: '已取消基础翻译', message: '当前基础信息翻译已停止。' });
     };
 
@@ -276,6 +279,10 @@ export function useBasicTranslation({
         canRetryTranslation.value = false;
         translationErrors.value = [];
         cancelTranslationFlag.value = false;
+        basicTranslationAbortController.value = null;
+        currentTranslatingField.value = '';
+        translatedCount.value = 0;
+        totalFieldsToTranslate.value = 0;
         stopTimeTracking();
     };
 
