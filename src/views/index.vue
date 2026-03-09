@@ -1257,32 +1257,6 @@ const startBatchTranslation = async () => {
     stopTimeTracking();
 };
 
-// 新增：显示翻译确认对话框
-const showTranslationConfirmDialog = (results, missingTags) => {
-    return new Promise((resolve) => {
-        // 创建确认对话框内容
-        let message = '翻译完成！\n\n成功翻译的字段：\n';
-        
-        for (const [field, translation] of Object.entries(results)) {
-            const fieldName = fieldNameMap[field] || field;
-            message += `✅ ${fieldName}\n`;
-        }
-        
-        if (missingTags.length > 0) {
-            message += '\n以下字段翻译失败：\n';
-            missingTags.forEach(({ field }) => {
-                message += `❌ ${field}\n`;
-            });
-        }
-        
-        message += '\n是否应用成功的翻译结果？';
-        
-        // 使用确认对话框（后续可以替换为更美观的模态框）
-        const confirmed = confirm(message);
-        resolve(confirmed);
-    });
-};
-
 const cancelTranslation = () => {
     cancelTranslationFlag.value = true;
     basicTranslationAbortController.value?.abort();
@@ -1790,34 +1764,6 @@ const startBookBatchTranslation = async () => {
     
     // 停止时间跟踪
     stopTimeTracking();
-};
-
-// 显示世界书翻译确认对话框
-const showBookTranslationConfirmDialog = (results, missingTags) => {
-    return new Promise((resolve) => {
-        let message = '世界书翻译完成！\n\n成功翻译的内容：\n';
-        
-        for (const [entryIndex, fields] of Object.entries(results)) {
-            const entryName = editableData.value.book_entries[parseInt(entryIndex)].name || `条目 ${parseInt(entryIndex) + 1}`;
-            message += `\n📚 ${entryName}:\n`;
-            
-            if (fields.name) message += `  ✅ 名称\n`;
-            if (fields.keywords) message += `  ✅ 关键词\n`;
-            if (fields.content) message += `  ✅ 内容\n`;
-        }
-        
-        if (missingTags.length > 0) {
-            message += '\n\n以下内容翻译失败：\n';
-            missingTags.forEach(({ field }) => {
-                message += `❌ ${field}\n`;
-            });
-        }
-        
-        message += '\n是否应用成功的翻译结果？';
-        
-        const confirmed = confirm(message);
-        resolve(confirmed);
-    });
 };
 
 const cancelBookTranslation = () => {
