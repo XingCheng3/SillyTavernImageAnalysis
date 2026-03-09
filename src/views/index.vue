@@ -134,8 +134,6 @@
                 </div>
                 <div v-if="snapshotMeta.currentLabel" class="snapshot-tip">当前快照：{{ snapshotMeta.currentLabel }}</div>
                 <button @click="exportCharacterCard" class="export-button">导出角色卡</button>
-                <div v-if="exportError" class="error-text">{{ exportError }}</div>
-                <div v-if="exportSuccess" class="success-text">{{ exportSuccess }}</div>
             </div>
         </div>
         
@@ -284,6 +282,7 @@ import NotificationBanner from '@/components/common/NotificationBanner.vue';
 import { useAppStore } from '@/stores/app';
 import { storeToRefs } from 'pinia';
 import CharacterCardParser, { CharacterCardUtils } from '@/utils/characterCardParser';
+import { getAdvancedFieldDisplayName } from '@/utils/translationDisplayNames';
 import {
     buildEditableCharacterData,
     createEmptyBookEntry,
@@ -294,6 +293,10 @@ import {
 } from '@/utils/editorCardAdapter';
 import { useStreamTranslation } from '@/composables/useStreamTranslation';
 import { useOperationFeedback } from '@/composables/useOperationFeedback';
+import { useGlobalReplace } from '@/composables/useGlobalReplace';
+import { useCharacterExport } from '@/composables/useCharacterExport';
+import { useErrorDetails } from '@/composables/useErrorDetails';
+import { useTranslationCompare } from '@/composables/useTranslationCompare';
 import { splitIntoBatches, buildBookTranslationTags, BatchState } from '@/utils/batchTranslationHelper';
 
 const appStore = useAppStore();
@@ -331,10 +334,6 @@ const debugMode = ref(true); // 开启调试模式
 const showSettingsModal = ref(false);
 const showPromptModal = ref(false);
 const showJailbreakModal = ref(false);
-const showCompareModal = ref(false);
-const translationCompareData = ref([]);
-const translationResults = ref(null); // 存储翻译结果
-
 // 批量翻译相关变量
 const showBatchTranslateModal = ref(false);
 const selectedFields = reactive({
@@ -425,21 +424,6 @@ watch(showAdvancedBatchTranslateModal, (val) => {
 });
 
 // 全局替换相关变量
-const showGlobalReplaceModal = ref(false);
-const replaceForm = reactive({
-    originalText: '',
-    newText: ''
-});
-const occurrenceCount = ref(0);
-const occurrenceDetails = ref([]);
-
-// 保存最终翻译信息用于对比弹窗
-const finalTranslationInfo = ref({
-    startTime: '',
-    duration: '',
-    modelName: ''
-});
-
 const {
     showErrorModal,
     errorModal,
@@ -449,6 +433,61 @@ const {
     clearOperationNotice,
     showOperationNotice,
 } = useOperationFeedback();
+
+const {
+    showGlobalReplaceModal,
+    replaceForm,
+    occurrenceCount,
+    occurrenceDetails,
+    checkOccurrences,
+    executeGlobalReplace,
+    closeGlobalReplaceModal,
+} = useGlobalReplace({
+    editableData,
+    pushSnapshot,
+    showOperationNotice,
+});
+
+const {
+    showErrorDetails,
+} = useErrorDetails({
+    openErrorModal,
+});
+
+const {
+    showCompareModal,
+    translationCompareData,
+    translationResults,
+    finalTranslationInfo,
+    prepareTranslationCompare,
+    prepareBookTranslationCompare,
+    prepareAdvancedTranslationCompare,
+    handleCompareApply,
+    handleComparePreview,
+    handleCompareClose,
+} = useTranslationCompare({
+    editableData,
+    apiSettings,
+    pushSnapshot,
+    showOperationNotice,
+    openErrorModal,
+    stopTimeTracking,
+    showBatchTranslateModal,
+    showBookBatchTranslateModal,
+    showAdvancedBatchTranslateModal,
+    isTranslating,
+    isTranslationComplete,
+    isBookTranslating,
+    isBookTranslationComplete,
+    isAdvancedTranslating,
+    isAdvancedTranslationComplete,
+    formattedStartTime,
+    translationDuration,
+    formattedBookStartTime,
+    bookTranslationDuration,
+    formattedAdvancedStartTime,
+    advancedTranslationDuration,
+});
 
 // 计算属性
 const hasSelectedFields = computed(() => {
@@ -622,8 +661,6 @@ const handleFileUpload = async (event) => {
     }
 };
 
-const exportError = ref('');
-const exportSuccess = ref('');
 const snapshots = ref([]);
 const snapshotCursor = ref(-1);
 const snapshotMeta = reactive({
@@ -642,7 +679,7 @@ const applySnapshotState = (snapshot) => {
     snapshotMeta.currentLabel = snapshot.label;
 };
 
-const pushSnapshot = (label = '手动快照') => {
+function pushSnapshot(label = '手动快照') {
     if (!editableData.value) return;
 
     const nextSnapshots = snapshots.value.slice(0, snapshotCursor.value + 1);
@@ -662,11 +699,15 @@ const pushSnapshot = (label = '手动快照') => {
     if (!snapshotMeta.initialLabel) {
         snapshotMeta.initialLabel = label;
     }
-};
+}
 
 const saveManualSnapshot = () => {
     pushSnapshot(`手动快照 ${new Date().toLocaleTimeString('zh-CN', { hour12: false })}`);
-    exportSuccess.value = '快照已保存';
+    showOperationNotice({
+        type: 'success',
+        title: '快照已保存',
+        message: snapshotMeta.currentLabel || '当前编辑状态已保存为快照。',
+    });
 };
 
 const undoLastSnapshot = () => {
@@ -760,119 +801,24 @@ const hasCharacterBook = () => {
 };
 
 // 获取角色卡规格版本
-const getSpecVersion = () => {
+function getSpecVersion() {
     return characterData.value ? detectCharacterSpec(characterData.value) : '未知';
-};
+}
 
-// 导出角色卡
-const exportCharacterCard = async () => {
-    if (!characterData.value || !editableData.value) {
-        showOperationNotice({
-            type: 'warning',
-            title: '没有可导出的角色卡',
-            message: '请先导入角色卡，再进行导出。',
-        });
-        return;
-    }
-
-    try {
-        exportError.value = '';
-        exportSuccess.value = '';
-
-        console.log('开始导出，当前数据状态：');
-        console.log('characterData.value:', characterData.value);
-        console.log('editableData.value:', editableData.value);
-        console.log('世界书条目数量:', editableData.value.book_entries?.length || 0);
-
-        // 准备要导出的数据
-        const finalCharacterData = JSON.parse(JSON.stringify(characterData.value));
-        
-        // 更新data部分
-        if (finalCharacterData.data) {
-            finalCharacterData.data = editableData.value;
-        } else {
-            // 如果没有data字段，需要包装
-            finalCharacterData.data = editableData.value;
-            finalCharacterData.spec = finalCharacterData.spec || getSpecVersion();
-        }
-
-        // 使用新的封装模块导出
-        const newPngBytes = CharacterCardUtils.exportToPNG(finalCharacterData, originalFileBytes.value);
-        
-        // 生成文件名
-        const characterName = editableData.value.name || 'character';
-        const timestamp = new Date().toISOString().slice(0, 19).replace(/[:-]/g, '');
-        const filename = `${characterName}_${timestamp}.png`;
-        
-        // 下载文件
-        CharacterCardUtils.downloadPNG(newPngBytes, filename);
-        
-        exportSuccess.value = '角色卡导出成功！';
-        showOperationNotice({
-            type: 'success',
-            title: '导出成功',
-            message: `已生成并下载 ${filename}`,
-        });
-        console.log('角色卡导出成功');
-        
-        // 导出成功后，验证数据是否仍然存在
-        console.log('导出完成后，数据状态：');
-        console.log('characterData.value存在:', !!characterData.value);
-        console.log('editableData.value存在:', !!editableData.value);
-        console.log('世界书条目数量:', editableData.value?.book_entries?.length || 0);
-        
-    } catch (err) {
-        console.error('导出失败:', err);
-        console.error('导出失败时的数据状态：');
-        console.log('characterData.value存在:', !!characterData.value);
-        console.log('editableData.value存在:', !!editableData.value);
-        exportError.value = `导出失败: ${err.message}`;
-        showOperationNotice({ type: 'error', title: '导出失败', message: err.message, duration: 7000 });
-    }
-};
+const {
+    exportCharacterCard,
+} = useCharacterExport({
+    characterData,
+    editableData,
+    originalFileBytes,
+    getSpecVersion,
+    showOperationNotice,
+    CharacterCardUtils,
+});
 
 const handleSaveSettings = (settings) => {
     // This event is kept for now, but settings are managed by Pinia
     console.log('API settings saved via modal event:', settings);
-};
-
-// 显示错误详情
-const showErrorDetails = (errorDetails) => {
-    let message = '详细错误信息:\n\n';
-    
-    if (errorDetails.code) {
-        message += `错误代码: ${errorDetails.code}\n`;
-    }
-    
-    if (errorDetails.type) {
-        message += `错误类型: ${errorDetails.type}\n`;
-    }
-    
-    if (errorDetails.message) {
-        message += `错误信息: ${errorDetails.message}\n`;
-    }
-    
-    if (errorDetails.status) {
-        message += `HTTP状态: ${errorDetails.status}\n`;
-    }
-    
-    if (errorDetails.statusText) {
-        message += `状态文本: ${errorDetails.statusText}\n`;
-    }
-    
-    // 显示其他可能的错误属性
-    const excludeKeys = ['code', 'type', 'message', 'status', 'statusText'];
-    Object.keys(errorDetails).forEach(key => {
-        if (!excludeKeys.includes(key) && errorDetails[key] !== null && errorDetails[key] !== undefined) {
-            message += `${key}: ${JSON.stringify(errorDetails[key])}\n`;
-        }
-    });
-    
-    openErrorModal({
-        title: '错误详情',
-        message: errorDetails?.message || '发生了一次需要关注的错误。',
-        details: message,
-    });
 };
 
 // 时间管理函数
@@ -1932,732 +1878,6 @@ const retryAllFailedBookBatches = async () => {
     console.log('🎉 所有失败批次重试完成');
 };
 
-// 准备翻译对比数据
-const prepareTranslationCompare = (results, missingTags, type) => {
-    const compareData = [];
-    
-    if (type === 'basic') {
-        // 处理基本字段翻译对比（不包含备选问候语）
-        for (const [field, translation] of Object.entries(results)) {
-            // 处理普通字段
-            const original = editableData.value[field] || '';
-            compareData.push({
-                field: field,
-                original: original,
-                translated: translation,
-                type: 'basic',
-                selected: true,
-                displayName: getFieldDisplayName(field)
-            });
-        }
-        
-        // 添加翻译失败的字段（显示为不可选择）
-        missingTags.forEach(({ field }) => {
-            const original = editableData.value[field] || '';
-            compareData.push({
-                field: field,
-                original: original,
-                translated: '',
-                type: 'basic',
-                selected: false,
-                failed: true,
-                displayName: getFieldDisplayName(field)
-            });
-        });
-    }
-    
-    // 存储翻译结果供后续应用
-    translationResults.value = results;
-    translationCompareData.value = compareData;
-    
-    // 保存最终翻译信息用于对比弹窗
-    finalTranslationInfo.value = {
-        startTime: formattedStartTime.value,
-        duration: translationDuration.value,
-        modelName: apiSettings.value.model
-    };
-    
-    // 显示对比模态框
-    showCompareModal.value = true;
-    
-    // 隐藏批量翻译弹窗
-    showBatchTranslateModal.value = false;
-    
-    // 翻译完成，停止进度显示
-    isTranslating.value = false;
-    isTranslationComplete.value = true;
-    stopTimeTracking();
-};
-
-// 应用选中的翻译结果
-const applySelectedTranslations = (selectedItems) => {
-    try {
-        pushSnapshot('应用基础翻译');
-        selectedItems.forEach(item => {
-            if (!item.failed && item.translated) {
-                // 处理普通字段（基本信息批量翻译中不再处理备选问候语）
-                editableData.value[item.field] = item.translated;
-            }
-        });
-        
-        console.log('已应用选中的翻译结果');
-        showCompareModal.value = false;
-        
-        // 不要立即关闭批量翻译模态框，让用户看到完成状态
-        // closeBatchTranslateModal();
-        showOperationNotice({
-            type: 'success',
-            title: '基础翻译已应用',
-            message: `已应用 ${selectedItems.length} 个基础字段的翻译结果。`,
-        });
-        
-    } catch (error) {
-        console.error('应用翻译结果失败:', error);
-        showOperationNotice({
-            type: 'error',
-            title: '应用基础翻译失败',
-            message: error.message,
-            duration: 7000,
-        });
-    }
-};
-
-// 预览翻译更改
-const previewTranslationChanges = (selectedItems) => {
-    let message = '将要应用以下翻译更改：\n\n';
-    
-    selectedItems.forEach(item => {
-        const fieldName = getFieldDisplayName(item.field);
-        message += `📝 ${fieldName}:\n`;
-        message += `   原文: ${item.original.substring(0, 50)}${item.original.length > 50 ? '...' : ''}\n`;
-        message += `   译文: ${item.translated.substring(0, 50)}${item.translated.length > 50 ? '...' : ''}\n\n`;
-    });
-    
-    openErrorModal({
-        title: '翻译变更预览',
-        message: '以下是基础字段翻译即将应用的内容。',
-        details: message,
-    });
-};
-
-// 字段显示名称映射
-const getFieldDisplayName = (field) => {
-    const fieldNames = {
-        name: '角色名称',
-        description: '角色描述',
-        personality: '性格特征',
-        scenario: '背景场景',
-        first_message: '首次问候',
-        message_example: '示例对话',
-        keywords: '关键词',
-        content: '条目内容'
-    };
-    return fieldNames[field] || field;
-};
-
-// 准备世界书翻译对比数据
-const prepareBookTranslationCompare = (results, missingTags, selectedIndices, fieldsToTranslate) => {
-    console.log('prepareBookTranslationCompare 被调用');
-    console.log('results:', results);
-    console.log('missingTags:', missingTags);
-    
-    const compareData = [];
-    
-    // 处理成功翻译的内容
-    for (const [entryIndex, fields] of Object.entries(results)) {
-        const entry = editableData.value.book_entries[parseInt(entryIndex)];
-        const entryName = entry.name || `条目 ${parseInt(entryIndex) + 1}`;
-        
-        Object.entries(fields).forEach(([field, translation]) => {
-            let original = '';
-            let fieldKey = `${entryIndex}-${field}`;
-            
-            if (field === 'name') {
-                original = entry.name || '';
-            } else if (field === 'keywords') {
-                original = entry.keysText || '';
-            } else if (field === 'content') {
-                original = entry.content || '';
-            }
-            
-            compareData.push({
-                field: fieldKey,
-                entryIndex: parseInt(entryIndex),
-                entryName: entryName,
-                fieldType: field,
-                original: original,
-                translated: translation,
-                type: 'worldbook',
-                selected: true,
-                displayName: `${entryName} - ${getFieldDisplayName(field)}`
-            });
-        });
-    }
-    
-    // 添加翻译失败的字段
-    missingTags.forEach(({ field }) => {
-        // 解析field中的条目信息
-        const parts = field.split(' - ');
-        if (parts.length === 2) {
-            const entryName = parts[0];
-            const fieldName = parts[1];
-            
-            compareData.push({
-                field: `failed-${field}`,
-                entryName: entryName,
-                fieldType: fieldName,
-                original: '',
-                translated: '',
-                type: 'worldbook',
-                selected: false,
-                failed: true
-            });
-        }
-    });
-    
-    // 存储翻译结果供后续应用
-    translationResults.value = results;
-    translationCompareData.value = compareData;
-    
-    console.log('准备显示对比模态框');
-    console.log('compareData:', compareData);
-    console.log('showCompareModal 设置为 true');
-    
-    // 保存最终翻译信息用于对比弹窗
-    finalTranslationInfo.value = {
-        startTime: formattedBookStartTime.value,
-        duration: bookTranslationDuration.value,
-        modelName: apiSettings.value.model
-    };
-    
-    // 显示对比模态框
-    showCompareModal.value = true;
-    
-    // 隐藏世界书批量翻译弹窗
-    showBookBatchTranslateModal.value = false;
-    
-    // 翻译完成，停止进度显示
-    isBookTranslating.value = false;
-    isBookTranslationComplete.value = true;
-    stopTimeTracking();
-};
-
-// 应用选中的世界书翻译结果
-const applySelectedBookTranslations = (selectedItems) => {
-    try {
-        pushSnapshot('应用世界书翻译');
-        selectedItems.forEach(item => {
-            if (!item.failed && item.translated && item.entryIndex !== undefined) {
-                const entry = editableData.value.book_entries[item.entryIndex];
-                
-                if (item.fieldType === 'name') {
-                    entry.name = item.translated;
-                } else if (item.fieldType === 'keywords') {
-                    entry.keysText = item.translated;
-                    // 更新keys数组
-                    entry.keys = item.translated.split(',').map(k => k.trim()).filter(Boolean);
-                } else if (item.fieldType === 'content') {
-                    entry.content = item.translated;
-                }
-            }
-        });
-        
-        console.log('已应用选中的世界书翻译结果');
-        showCompareModal.value = false;
-        
-        // 不要立即关闭世界书批量翻译模态框，让用户看到完成状态
-        // closeBookBatchTranslateModal();
-        showOperationNotice({
-            type: 'success',
-            title: '世界书翻译已应用',
-            message: `已应用 ${selectedItems.length} 项世界书修改。`,
-        });
-        
-    } catch (error) {
-        console.error('应用世界书翻译结果失败:', error);
-        showOperationNotice({
-            type: 'error',
-            title: '应用世界书翻译失败',
-            message: error.message,
-            duration: 7000,
-        });
-    }
-};
-
-// 处理对比模态框事件
-const handleCompareApply = (selectedItems) => {
-    const currentType = translationCompareData.value[0]?.type;
-    
-    if (currentType === 'basic') {
-        applySelectedTranslations(selectedItems);
-    } else if (currentType === 'worldbook') {
-        applySelectedBookTranslations(selectedItems);
-    } else if (currentType === 'advanced') {
-        applySelectedAdvancedTranslations(selectedItems);
-    }
-};
-
-const handleComparePreview = (selectedItems) => {
-    const currentType = translationCompareData.value[0]?.type;
-    
-    if (currentType === 'basic') {
-        previewTranslationChanges(selectedItems);
-    } else if (currentType === 'worldbook') {
-        // 世界书预览
-        let message = '将要应用以下翻译更改：\n\n';
-        
-        selectedItems.forEach(item => {
-            message += `📚 ${item.entryName} - ${getFieldDisplayName(item.fieldType)}:\n`;
-            message += `   原文: ${item.original.substring(0, 50)}${item.original.length > 50 ? '...' : ''}\n`;
-            message += `   译文: ${item.translated.substring(0, 50)}${item.translated.length > 50 ? '...' : ''}\n\n`;
-        });
-        
-        openErrorModal({
-            title: '翻译变更预览',
-            message: '以下是世界书翻译即将应用的内容。',
-            details: message,
-        });
-    } else if (currentType === 'advanced') {
-        // 高级设置预览
-        let message = '将要应用以下翻译更改：\n\n';
-        
-        selectedItems.forEach(item => {
-            message += `⚙️ ${item.displayName}:\n`;
-            message += `   原文: ${item.original.substring(0, 50)}${item.original.length > 50 ? '...' : ''}\n`;
-            message += `   译文: ${item.translated.substring(0, 50)}${item.translated.length > 50 ? '...' : ''}\n\n`;
-        });
-        
-        openErrorModal({
-            title: '翻译变更预览',
-            message: '以下是高级设置翻译即将应用的内容。',
-            details: message,
-        });
-    }
-};
-
-const handleCompareClose = () => {
-    showCompareModal.value = false;
-    translationCompareData.value = [];
-    translationResults.value = null;
-    
-    // 清理最终翻译信息
-    finalTranslationInfo.value = {
-        startTime: '',
-        duration: '',
-        modelName: ''
-    };
-};
-
-// 高级设置批量翻译
-const startAdvancedBatchTranslation = async () => {
-    console.log('开始高级设置批量翻译');
-    
-    // 检查是否有选中的字段
-    if (!hasAdvancedSelectedFields.value) {
-        showOperationNotice({
-            type: 'warning',
-            title: '请选择高级设置字段',
-            message: '至少选择一个高级设置字段后才能开始翻译。',
-        });
-        return;
-    }
-    
-    // 初始化状态
-    advancedTranslatedCount.value = 0;
-    advancedTranslationErrors.value = [];
-    isAdvancedTranslating.value = true;
-    isAdvancedTranslationComplete.value = false;
-    isAdvancedTranslationError.value = false;
-    canRetryAdvancedTranslation.value = false;
-    cancelAdvancedTranslationFlag.value = false;
-    
-    // 开始时间跟踪
-    startAdvancedTimeTracking();
-    
-    try {
-        // 准备翻译数据  
-        const fieldsToTranslate = [];
-        let totalFields = 0;
-        
-        // 收集需要翻译的字段
-        Object.entries(advancedTranslateFields).forEach(([field, selected]) => {
-            if (selected) {
-                if (field === 'alternate_greetings') {
-                    // 处理备选问候语数组
-                    if (Array.isArray(editableData.value.alternate_greetings) && editableData.value.alternate_greetings.length > 0) {
-                        editableData.value.alternate_greetings.forEach((greeting, index) => {
-                            // 仅加入被勾选的问候语
-                            if (selectedAlternateGreetings.value[index] && greeting && greeting.trim()) {
-                                fieldsToTranslate.push({
-                                    type: 'alternate_greeting',
-                                    field: 'alternate_greetings',
-                                    index: index,
-                                    content: greeting.trim()
-                                });
-                                totalFields++;
-                            }
-                        });
-                    }
-                } else if (editableData.value[field] && editableData.value[field].trim()) {
-                    // 处理普通字段
-                    fieldsToTranslate.push({
-                        type: 'normal',
-                        field: field,
-                        content: editableData.value[field].trim()
-                    });
-                    totalFields++;
-                }
-            }
-        });
-        
-        if (fieldsToTranslate.length === 0) {
-            showOperationNotice({
-                type: 'warning',
-                title: '没有可翻译内容',
-                message: '当前所选高级设置字段没有可用文本。',
-            });
-            isAdvancedTranslating.value = false;
-            stopTimeTracking();
-            return;
-        }
-        
-        advancedTotalToTranslate.value = totalFields;
-        
-        // 构建翻译请求
-        let translationText = '';
-        let tagIndex = 1;
-        const fieldTagMap = {};
-        
-        fieldsToTranslate.forEach((item, index) => {
-            const tag = `TXT${tagIndex}`;
-            fieldTagMap[tag] = item;
-            translationText += `<${tag}>${item.content}</${tag}>\n\n`;
-            tagIndex++;
-        });
-        
-        console.log('发送翻译请求:', translationText);
-        
-        // 单次API请求翻译所有内容
-        advancedTranslationAbortController.value = new AbortController();
-        const response = await fetch(apiSettings.value.url + '/chat/completions', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${apiSettings.value.key}`
-            },
-            signal: advancedTranslationAbortController.value.signal,
-            body: JSON.stringify({
-                model: apiSettings.value.model,
-                messages: [
-                    { 
-                        role: 'system', 
-                        content: buildTranslationPrompt(translationConfig.value, true)
-                    },
-                    { role: 'user', content: translationText }
-                ],
-                temperature: 0.3
-            })
-        });
-        advancedTranslationAbortController.value = null;
-        
-        if (!response.ok) {
-            const errData = await response.json();
-            // 保存完整的错误信息
-            const errorInfo = {
-                status: response.status,
-                statusText: response.statusText,
-                ...errData.error
-            };
-            const errorMessage = JSON.stringify(errorInfo, null, 2);
-            throw new Error(errorMessage);
-        }
-
-        const data = await response.json();
-        if (!data.choices || data.choices.length === 0) {
-            throw new Error('API未返回任何结果');
-        }
-
-        const result = { translation: data.choices[0].message.content };
-        
-        if (cancelAdvancedTranslationFlag.value) {
-            console.log('高级设置翻译被用户取消');
-            return;
-        }
-        
-        // 解析翻译结果
-        const results = {};
-        const missingTags = [];
-        const expectedTags = Object.keys(fieldTagMap);
-        
-        Object.entries(fieldTagMap).forEach(([tag, item]) => {
-            const regex = new RegExp(`<${tag}>(.*?)</${tag}>`, 's');
-            const match = result.translation.match(regex);
-            
-            if (match && match[1] && match[1].trim()) {
-                if (item.type === 'alternate_greeting') {
-                    // 处理备选问候语
-                    if (!results.alternate_greetings) {
-                        results.alternate_greetings = [];
-                    }
-                    results.alternate_greetings[item.index] = match[1].trim();
-                } else {
-                    // 处理普通字段
-                    results[item.field] = match[1].trim();
-                }
-                advancedTranslatedCount.value++;
-            } else {
-                const fieldDisplayName = item.type === 'alternate_greeting' 
-                    ? `备选问候语 ${item.index + 1}` 
-                    : getAdvancedFieldDisplayName(item.field);
-                missingTags.push({ 
-                    field: fieldDisplayName, 
-                    tag,
-                    item: item  // 保存原始item信息
-                });
-            }
-        });
-        
-        console.log('高级设置翻译结果:', results);
-        console.log('丢失的标签:', missingTags);
-        
-        // 若返回不符合预期格式
-        const resultKeys = Object.keys(results);
-        const allMissing = missingTags.length === expectedTags.length;
-        const noUseful = resultKeys.length === 0 || (resultKeys.length === 1 && resultKeys[0] === 'alternate_greetings' && (!Array.isArray(results.alternate_greetings) || results.alternate_greetings.filter(Boolean).length === 0));
-        if (allMissing || noUseful) {
-            const badFormatMsg = '返回结果未遵循预期返回格式，请重试';
-            openErrorModal({
-                title: '高级设置翻译失败',
-                code: 'BAD_FORMAT',
-                message: badFormatMsg,
-                details: { expectedTags, translatedText: result.translation?.slice(0, 800) }
-            });
-            advancedTranslationErrors.value.push({ field: '高级设置批量翻译', message: badFormatMsg });
-            isAdvancedTranslationError.value = true;
-            canRetryAdvancedTranslation.value = true;
-            isAdvancedTranslating.value = false;
-            stopTimeTracking();
-            return;
-        }
-
-        // 记录丢失的标签作为错误
-        if (missingTags.length > 0) {
-            missingTags.forEach(({ field, tag, item }) => {
-                advancedTranslationErrors.value.push({
-                    field: field,
-                    message: `标签 ${tag} 在返回结果中丢失`,
-                    details: item  // 保存原始item信息
-                });
-            });
-        }
-        
-        // 准备翻译对比数据
-        prepareAdvancedTranslationCompare(results, missingTags);
-        
-    } catch (err) {
-        if (err?.name === 'AbortError') {
-            console.log('高级设置翻译已取消');
-            return;
-        }
-        console.error('高级设置批量翻译失败:', err);
-        
-        // 解析错误信息
-        let errorMessage = err.message;
-        let errorDetails = null;
-        
-        try {
-            // 尝试解析服务器返回的错误格式
-            if (err.message.includes('{')) {
-                const errorObj = JSON.parse(err.message);
-                if (errorObj.error) {
-                    errorDetails = errorObj.error;
-                    errorMessage = errorObj.error.message || err.message;
-                } else if (errorObj.code || errorObj.type) {
-                    errorDetails = errorObj;
-                    errorMessage = errorObj.message || err.message;
-                }
-            }
-        } catch (parseErr) {
-            console.log('非JSON格式错误，使用原始信息');
-        }
-        
-        // 显示用户友好的错误信息弹窗
-        const friendlyMessage = getFriendlyErrorMessage(errorDetails || { message: errorMessage });
-        openErrorModal({
-            title: '高级设置翻译失败',
-            code: mapErrorCode(errorDetails || { message: errorMessage }),
-            message: friendlyMessage,
-            status: errorDetails?.status,
-            statusText: errorDetails?.statusText,
-            details: errorDetails || { message: errorMessage }
-        });
-        
-        advancedTranslationErrors.value.push({
-            field: '高级设置批量翻译',
-            message: errorMessage,
-            details: errorDetails
-        });
-        
-        // 设置错误状态，允许重试
-        isAdvancedTranslationError.value = true;
-        canRetryAdvancedTranslation.value = true;
-        isAdvancedTranslating.value = false;
-        
-        // 停止时间跟踪
-        stopTimeTracking();
-        
-        // 不设置完成状态，因为这是错误情况
-        return;
-    }
-    
-    // 只有在成功的情况下才设置完成状态
-    isAdvancedTranslating.value = false;
-    isAdvancedTranslationComplete.value = true;
-    
-    // 停止时间跟踪
-    stopTimeTracking();
-};
-
-// 准备高级设置翻译对比数据
-const prepareAdvancedTranslationCompare = (results, missingTags) => {
-    const compareData = [];
-    
-    // 处理成功翻译的内容
-    Object.entries(results).forEach(([field, translation]) => {
-        if (field === 'alternate_greetings' && Array.isArray(translation)) {
-            // 处理备选问候语数组
-            translation.forEach((greetingTranslation, index) => {
-                if (greetingTranslation) {
-                    const original = editableData.value.alternate_greetings?.[index] || '';
-                    compareData.push({
-                        field: 'alternate_greetings',
-                        index: index,
-                        original: original,
-                        translated: greetingTranslation,
-                        type: 'advanced',
-                        selected: true,
-                        displayName: `备选问候语 ${index + 1}`
-                    });
-                }
-            });
-        } else {
-            // 处理普通字段
-            const original = editableData.value[field] || '';
-            compareData.push({
-                field: field,
-                original: original,
-                translated: translation,
-                type: 'advanced',
-                selected: true,
-                displayName: getAdvancedFieldDisplayName(field)
-            });
-        }
-    });
-    
-    // 添加翻译失败的字段
-    missingTags.forEach(({ field, tag, item }) => {
-        if (item && item.type === 'alternate_greeting') {
-            // 处理失败的备选问候语
-            const original = editableData.value.alternate_greetings?.[item.index] || '';
-            compareData.push({
-                field: 'alternate_greetings',
-                index: item.index,
-                original: original,
-                translated: '',
-                type: 'advanced',
-                selected: false,
-                failed: true,
-                displayName: `备选问候语 ${item.index + 1}`,
-                details: item
-            });
-        } else {
-            // 处理失败的普通字段
-            const original = editableData.value[field] || '';
-            compareData.push({
-                field: field,
-                original: original,
-                translated: '',
-                type: 'advanced',
-                selected: false,
-                failed: true,
-                displayName: getAdvancedFieldDisplayName(field),
-                details: item
-            });
-        }
-    });
-    
-    // 存储翻译结果供后续应用
-    translationResults.value = results;
-    translationCompareData.value = compareData;
-    
-    // 保存最终翻译信息用于对比弹窗
-    finalTranslationInfo.value = {
-        startTime: formattedAdvancedStartTime.value,
-        duration: advancedTranslationDuration.value,
-        modelName: apiSettings.value.model
-    };
-    
-    // 显示对比模态框
-    showCompareModal.value = true;
-    
-    // 隐藏高级设置批量翻译弹窗
-    showAdvancedBatchTranslateModal.value = false;
-    
-    // 翻译完成，停止进度显示
-    isAdvancedTranslating.value = false;
-    isAdvancedTranslationComplete.value = true;
-    stopTimeTracking();
-};
-
-// 应用选中的高级设置翻译结果
-const applySelectedAdvancedTranslations = (selectedItems) => {
-    try {
-        pushSnapshot('应用高级设置翻译');
-        selectedItems.forEach(item => {
-            if (!item.failed && item.translated) {
-                if (item.field === 'alternate_greetings' && item.index !== undefined) {
-                    // 处理备选问候语
-                    if (!editableData.value.alternate_greetings) {
-                        editableData.value.alternate_greetings = [];
-                    }
-                    editableData.value.alternate_greetings[item.index] = item.translated;
-                } else {
-                    // 处理普通字段
-                    editableData.value[item.field] = item.translated;
-                }
-            }
-        });
-        
-        console.log('已应用选中的高级设置翻译结果');
-        showCompareModal.value = false;
-        showOperationNotice({
-            type: 'success',
-            title: '高级设置翻译已应用',
-            message: `已应用 ${selectedItems.length} 个高级字段的翻译结果。`,
-        });
-        
-    } catch (error) {
-        console.error('应用高级设置翻译结果失败:', error);
-        showOperationNotice({
-            type: 'error',
-            title: '应用高级设置翻译失败',
-            message: error.message,
-            duration: 7000,
-        });
-    }
-};
-
-// 高级设置字段显示名称映射
-const getAdvancedFieldDisplayName = (field) => {
-    const fieldNames = {
-        system_prompt: '系统提示词',
-        post_history_instructions: '历史后指令',
-        creator_notes: '作者备注',
-        alternate_greetings: '备选问候语'
-    };
-    return fieldNames[field] || field;
-};
-
 // 取消高级设置翻译
 const cancelAdvancedTranslation = () => {
     cancelAdvancedTranslationFlag.value = true;
@@ -2684,226 +1904,6 @@ const closeAdvancedBatchTranslateModal = () => {
     stopTimeTracking();
 };
 
-// 全局替换功能函数
-const checkOccurrences = () => {
-    if (!replaceForm.originalText || !editableData.value) {
-        occurrenceCount.value = 0;
-        occurrenceDetails.value = [];
-        return;
-    }
-    
-    const searchText = replaceForm.originalText;
-    let totalCount = 0;
-    const details = [];
-    
-    // 定义要搜索的字段及其显示名称
-    const fieldsToSearch = [
-        { key: 'name', name: '角色名称' },
-        { key: 'description', name: '描述' },
-        { key: 'personality', name: '性格' },
-        { key: 'scenario', name: '场景' },
-        { key: 'first_message', name: '首次问候' },
-        { key: 'message_example', name: '示例对话' },
-        { key: 'system_prompt', name: '系统提示词' },
-        { key: 'post_history_instructions', name: '历史后指令' },
-        { key: 'creator_notes', name: '作者备注' }
-    ];
-    
-    // 搜索普通字段
-    fieldsToSearch.forEach(field => {
-        const fieldValue = editableData.value[field.key];
-        if (fieldValue && typeof fieldValue === 'string') {
-            const matches = fieldValue.split(searchText).length - 1;
-            if (matches > 0) {
-                totalCount += matches;
-                
-                // 创建预览文本
-                const index = fieldValue.indexOf(searchText);
-                const start = Math.max(0, index - 20);
-                const end = Math.min(fieldValue.length, index + searchText.length + 20);
-                const preview = (start > 0 ? '...' : '') + 
-                               fieldValue.substring(start, end) + 
-                               (end < fieldValue.length ? '...' : '');
-                
-                details.push({
-                    field: field.key,
-                    fieldName: field.name,
-                    count: matches,
-                    preview: preview
-                });
-            }
-        }
-    });
-    
-    // 搜索备选问候语
-    if (Array.isArray(editableData.value.alternate_greetings)) {
-        editableData.value.alternate_greetings.forEach((greeting, index) => {
-            if (greeting && typeof greeting === 'string') {
-                const matches = greeting.split(searchText).length - 1;
-                if (matches > 0) {
-                    totalCount += matches;
-                    
-                    const greetingIndex = greeting.indexOf(searchText);
-                    const start = Math.max(0, greetingIndex - 20);
-                    const end = Math.min(greeting.length, greetingIndex + searchText.length + 20);
-                    const preview = (start > 0 ? '...' : '') + 
-                                   greeting.substring(start, end) + 
-                                   (end < greeting.length ? '...' : '');
-                    
-                    details.push({
-                        field: `alternate_greetings_${index}`,
-                        fieldName: `备选问候语 ${index + 1}`,
-                        count: matches,
-                        preview: preview
-                    });
-                }
-            }
-        });
-    }
-    
-    // 搜索世界书条目
-    if (Array.isArray(editableData.value.book_entries)) {
-        editableData.value.book_entries.forEach((entry, index) => {
-            // 搜索条目名称
-            if (entry.name && typeof entry.name === 'string') {
-                const matches = entry.name.split(searchText).length - 1;
-                if (matches > 0) {
-                    totalCount += matches;
-                    details.push({
-                        field: `book_entry_${index}_name`,
-                        fieldName: `世界书条目 ${index + 1} - 名称`,
-                        count: matches,
-                        preview: entry.name
-                    });
-                }
-            }
-            
-            // 搜索条目内容
-            if (entry.content && typeof entry.content === 'string') {
-                const matches = entry.content.split(searchText).length - 1;
-                if (matches > 0) {
-                    totalCount += matches;
-                    
-                    const contentIndex = entry.content.indexOf(searchText);
-                    const start = Math.max(0, contentIndex - 20);
-                    const end = Math.min(entry.content.length, contentIndex + searchText.length + 20);
-                    const preview = (start > 0 ? '...' : '') + 
-                                   entry.content.substring(start, end) + 
-                                   (end < entry.content.length ? '...' : '');
-                    
-                    details.push({
-                        field: `book_entry_${index}_content`,
-                        fieldName: `世界书条目 ${index + 1} - 内容`,
-                        count: matches,
-                        preview: preview
-                    });
-                }
-            }
-            
-            // 搜索关键词
-            if (entry.keysText && typeof entry.keysText === 'string') {
-                const matches = entry.keysText.split(searchText).length - 1;
-                if (matches > 0) {
-                    totalCount += matches;
-                    details.push({
-                        field: `book_entry_${index}_keys`,
-                        fieldName: `世界书条目 ${index + 1} - 关键词`,
-                        count: matches,
-                        preview: entry.keysText
-                    });
-                }
-            }
-        });
-    }
-    
-    occurrenceCount.value = totalCount;
-    occurrenceDetails.value = details;
-};
-
-const executeGlobalReplace = () => {
-    if (!replaceForm.originalText || !editableData.value) {
-        showOperationNotice({ type: 'warning', title: '替换条件不完整', message: '请先填写要查找的原文本。' });
-        return;
-    }
-    
-    pushSnapshot('执行全局替换');
-    const searchText = replaceForm.originalText;
-    const newText = replaceForm.newText ?? '';
-    let totalReplaced = 0;
-    
-    // 定义要替换的字段
-    const fieldsToReplace = [
-        'name', 'description', 'personality', 'scenario', 
-        'first_message', 'message_example', 'system_prompt', 
-        'post_history_instructions', 'creator_notes'
-    ];
-    
-    // 替换普通字段
-    fieldsToReplace.forEach(field => {
-        const fieldValue = editableData.value[field];
-        if (fieldValue && typeof fieldValue === 'string' && fieldValue.includes(searchText)) {
-            const beforeCount = fieldValue.split(searchText).length - 1;
-            editableData.value[field] = fieldValue.replaceAll(searchText, newText);
-            totalReplaced += beforeCount;
-        }
-    });
-    
-    // 替换备选问候语
-    if (Array.isArray(editableData.value.alternate_greetings)) {
-        editableData.value.alternate_greetings.forEach((greeting, index) => {
-            if (greeting && typeof greeting === 'string' && greeting.includes(searchText)) {
-                const beforeCount = greeting.split(searchText).length - 1;
-                editableData.value.alternate_greetings[index] = greeting.replaceAll(searchText, newText);
-                totalReplaced += beforeCount;
-            }
-        });
-    }
-    
-    // 替换世界书条目
-    if (Array.isArray(editableData.value.book_entries)) {
-        editableData.value.book_entries.forEach((entry, index) => {
-            // 替换条目名称
-            if (entry.name && typeof entry.name === 'string' && entry.name.includes(searchText)) {
-                const beforeCount = entry.name.split(searchText).length - 1;
-                entry.name = entry.name.replaceAll(searchText, newText);
-                totalReplaced += beforeCount;
-            }
-            
-            // 替换条目内容
-            if (entry.content && typeof entry.content === 'string' && entry.content.includes(searchText)) {
-                const beforeCount = entry.content.split(searchText).length - 1;
-                entry.content = entry.content.replaceAll(searchText, newText);
-                totalReplaced += beforeCount;
-            }
-            
-            // 替换关键词
-            if (entry.keysText && typeof entry.keysText === 'string' && entry.keysText.includes(searchText)) {
-                const beforeCount = entry.keysText.split(searchText).length - 1;
-                entry.keysText = entry.keysText.replaceAll(searchText, newText);
-                // 同时更新keys数组
-                entry.keys = entry.keysText.split(',').map(k => k.trim()).filter(Boolean);
-                totalReplaced += beforeCount;
-            }
-        });
-    }
-    
-    showOperationNotice({ type: 'success', title: '全局替换完成', message: `共替换了 ${totalReplaced} 处文本。` });
-    
-    // 重置表单并关闭模态框
-    replaceForm.originalText = '';
-    replaceForm.newText = '';
-    occurrenceCount.value = 0;
-    occurrenceDetails.value = [];
-    showGlobalReplaceModal.value = false;
-};
-
-const closeGlobalReplaceModal = () => {
-    showGlobalReplaceModal.value = false;
-    replaceForm.originalText = '';
-    replaceForm.newText = '';
-    occurrenceCount.value = 0;
-    occurrenceDetails.value = [];
-};
 </script>
 
 
