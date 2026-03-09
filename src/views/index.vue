@@ -293,7 +293,9 @@ import { useTranslationTiming } from '@/composables/useTranslationTiming';
 import { useCharacterEditor } from '@/composables/useCharacterEditor';
 import { useBasicTranslation } from '@/composables/useBasicTranslation';
 import { useAdvancedTranslationActions } from '@/composables/useAdvancedTranslationActions';
+import { useWorldBookActions } from '@/composables/useWorldBookActions';
 import { splitIntoBatches, buildBookTranslationTags, BatchState } from '@/utils/batchTranslationHelper';
+import { getSelectedBookIndices, getBookFieldsToTranslate, countBookTranslationItems, collectBookBatchResults } from '@/utils/worldBookTranslationWorkflow';
 
 const appStore = useAppStore();
 const { apiSettings, translationConfig } = storeToRefs(appStore);
@@ -711,17 +713,41 @@ onMounted(() => {
 
 
 
+const {
+    selectAllBookEntries,
+    deselectAllBookEntries,
+    cancelBookTranslation,
+    closeBookBatchTranslateModal,
+    retryBookBatch,
+    retryAllFailedBookBatches,
+} = useWorldBookActions({
+    editableData,
+    selectedBookEntries,
+    bookTranslateFields,
+    bookBatchTranslateModalRef,
+    bookBatchState,
+    bookStreamTranslate,
+    cancelBookStream,
+    bookRequestAbortControllers,
+    bookStreamResults,
+    bookTranslationErrors,
+    bookTranslationMissingTags,
+    cancelBookTranslationFlag,
+    showBookBatchTranslateModal,
+    isBookTranslating,
+    isBookTranslationComplete,
+    isBookTranslationError,
+    canRetryBookTranslation,
+    apiSettings,
+    translationConfig,
+    checkAndPromptApiConfig,
+    buildTranslationPrompt,
+    buildBookTranslationTags,
+    showOperationNotice,
+    stopTimeTracking,
+});
+
 // 世界书批量翻译函数
-const selectAllBookEntries = () => {
-    if (editableData.value.book_entries) {
-        selectedBookEntries.value = new Array(editableData.value.book_entries.length).fill(true);
-    }
-};
-
-const deselectAllBookEntries = () => {
-    selectedBookEntries.value = [];
-};
-
 const startBookBatchTranslation = async () => {
     // 首先检查API配置
     if (!checkAndPromptApiConfig()) {
@@ -754,9 +780,7 @@ const startBookBatchTranslation = async () => {
     startBookTimeTracking();
 
     // 获取选中的条目索引
-    const selectedIndices = selectedBookEntries.value
-        .map((selected, index) => selected ? index : -1)
-        .filter(index => index !== -1);
+    const selectedIndices = getSelectedBookIndices(selectedBookEntries.value);
     
     if (selectedIndices.length === 0) {
         showOperationNotice({
@@ -769,10 +793,7 @@ const startBookBatchTranslation = async () => {
     }
 
     // 获取选中的字段
-    const fieldsToTranslate = [];
-    if (bookTranslateFields.name) fieldsToTranslate.push('name');
-    if (bookTranslateFields.keywords) fieldsToTranslate.push('keywords');
-    if (bookTranslateFields.content) fieldsToTranslate.push('content');
+    const fieldsToTranslate = getBookFieldsToTranslate(bookTranslateFields);
     
     if (fieldsToTranslate.length === 0) {
         showOperationNotice({
@@ -795,18 +816,10 @@ const startBookBatchTranslation = async () => {
         bookBatchState.init(totalBatches, batches);
         
         // 计算总条目数（用于显示总进度）
-        let totalItemsToTranslate = 0;
-        batches.forEach(batchIndices => {
-            batchIndices.forEach(entryIndex => {
-            fieldsToTranslate.forEach(field => {
-                    const entry = editableData.value.book_entries[entryIndex];
-                    if ((field === 'name' && entry.name) ||
-                        (field === 'keywords' && entry.keysText) ||
-                        (field === 'content' && entry.content)) {
-                        totalItemsToTranslate++;
-                    }
-                });
-            });
+        const totalItemsToTranslate = countBookTranslationItems({
+            editableData: editableData.value,
+            batches,
+            fieldsToTranslate,
         });
         
         bookTotalToTranslate.value = totalItemsToTranslate;
@@ -1087,12 +1100,7 @@ const startBookBatchTranslation = async () => {
         console.log(`❌ 失败: ${failedBatches.length}/${totalBatches} 批`, failedBatches);
         
         // 汇总所有成功批次的结果
-        const allResults = {};
-        bookBatchState.batches.forEach(batch => {
-            if (batch.status === 'success' && batch.results) {
-                Object.assign(allResults, batch.results);
-            }
-        });
+        const allResults = collectBookBatchResults(bookBatchState);
         
         console.log('汇总后的翻译结果:', allResults);
         
@@ -1186,223 +1194,11 @@ const startBookBatchTranslation = async () => {
     stopTimeTracking();
 };
 
-const cancelBookTranslation = () => {
-    cancelBookTranslationFlag.value = true;
-    isBookTranslating.value = false;
-    isBookTranslationComplete.value = false;
 
-    cancelBookStream();
-    bookRequestAbortControllers.value.forEach(controller => controller.abort());
-    bookRequestAbortControllers.value = [];
-    showOperationNotice({ type: 'info', title: '已取消世界书翻译', message: '未完成的翻译批次已停止。' });
-};
-
-const closeBookBatchTranslateModal = () => {
-    showBookBatchTranslateModal.value = false;
-    isBookTranslating.value = false;
-    isBookTranslationComplete.value = false;
-    isBookTranslationError.value = false;
-    canRetryBookTranslation.value = false;
-    bookTranslationErrors.value = [];
-    bookTranslationMissingTags.value = [];
-    cancelBookTranslationFlag.value = false;
-    selectedBookEntries.value = [];
-    bookStreamResults.value = [];
-    bookRequestAbortControllers.value = [];
-
-    stopTimeTracking();
-};
 
 // 重试单个失败的批次
-const retryBookBatch = async (batchIndex) => {
-    console.log(`🔄 重试批次 ${batchIndex + 1}`);
-    
-    if (!checkAndPromptApiConfig()) {
-        return;
-    }
-    
-    // 获取模态框设置
-    const modalSettings = bookBatchTranslateModalRef.value;
-    const useStream = modalSettings?.useStreamTranslation ?? false;
-    
-    // 获取该批次的条目索引
-    const batchIndices = bookBatchState.getBatchData(batchIndex);
-    if (!batchIndices || batchIndices.length === 0) {
-        showOperationNotice({
-            type: 'warning',
-            title: '无法获取批次数据',
-            message: '这个批次的上下文数据不存在，请重新发起翻译。',
-        });
-        return;
-    }
-    
-    // 清除该批次的旧错误
-    bookTranslationErrors.value = bookTranslationErrors.value.filter(
-        err => !err.field.startsWith(`批次 ${batchIndex + 1}`) && !err.field.startsWith(`批次${batchIndex + 1}`)
-    );
-    
-    // 从流式结果中移除该批次的结果
-    bookStreamResults.value = bookStreamResults.value.filter(item => item.batchIndex !== batchIndex);
-    
-    // 获取要翻译的字段
-    const fieldsToTranslate = [];
-    if (bookTranslateFields.name) fieldsToTranslate.push('name');
-    if (bookTranslateFields.keywords) fieldsToTranslate.push('keywords');
-    if (bookTranslateFields.content) fieldsToTranslate.push('content');
-    
-    // 标记为正在翻译
-    bookBatchState.setBatchStatus(batchIndex, 'translating');
-    
-    try {
-        // 构建标签文本
-        const { taggedText, fieldMap, totalTags } = buildBookTranslationTags(
-            editableData.value.book_entries,
-            batchIndices,
-            fieldsToTranslate,
-            editableData.value
-        );
-        
-        if (!taggedText || totalTags === 0) {
-            bookBatchState.setBatchStatus(batchIndex, 'success', { results: {} });
-            return;
-        }
-        
-        console.log(`📤 重试批次 ${batchIndex + 1}，包含 ${totalTags} 个字段`);
-        
-        // 执行翻译（复用相同的逻辑）
-        if (useStream) {
-            const result = await bookStreamTranslate({
-                apiUrl: apiSettings.value.url,
-                apiKey: apiSettings.value.key,
-                model: apiSettings.value.model,
-                systemPrompt: buildTranslationPrompt(translationConfig.value, true) + '\nFor keyword lists separated by commas, translate each keyword and keep the comma separation.',
-                userContent: taggedText,
-                tagMap: fieldMap,
-                onProgress: (progressData) => {
-                    if (progressData.completed) {
-                        bookStreamResults.value.push({
-                            tag: progressData.tag,
-                            result: progressData.result,
-                            info: progressData.info,
-                            batchIndex: batchIndex,
-                            selected: true
-                        });
-                    }
-                }
-            });
-            
-            if (result.success) {
-                const batchResults = {};
-                for (const [tag, content] of Object.entries(result.results)) {
-                    const info = fieldMap[tag];
-                    if (info) {
-                        if (!batchResults[info.entryIndex]) {
-                            batchResults[info.entryIndex] = {};
-                        }
-                        batchResults[info.entryIndex][info.field] = content;
-                    }
-                }
-                bookBatchState.setBatchStatus(batchIndex, 'success', { results: batchResults });
-                console.log(`✅ 批次 ${batchIndex + 1} 重试成功`);
-            } else {
-                throw new Error(result.error || '重试失败');
-            }
-        } else {
-            // 普通翻译
-            const retryAbortController = new AbortController();
-            bookRequestAbortControllers.value.push(retryAbortController);
-            const response = await fetch(apiSettings.value.url + '/chat/completions', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${apiSettings.value.key}`
-                },
-                signal: retryAbortController.signal,
-                body: JSON.stringify({
-                    model: apiSettings.value.model,
-                    messages: [
-                        { 
-                            role: 'system', 
-                            content: buildTranslationPrompt(translationConfig.value, true) + '\nFor keyword lists separated by commas, translate each keyword and keep the comma separation.'
-                        },
-                        { role: 'user', content: taggedText }
-                    ],
-                    temperature: 0.3
-                })
-            });
-            
-            bookRequestAbortControllers.value = bookRequestAbortControllers.value.filter(controller => controller !== retryAbortController);
-
-            if (!response.ok) {
-                const errData = await response.json();
-                throw new Error(errData.error?.message || '请求失败');
-            }
-            
-            const data = await response.json();
-            const translatedText = data.choices[0].message.content;
-            
-            // 解析结果
-            const batchResults = {};
-            for (const [tag, info] of Object.entries(fieldMap)) {
-                const regex = new RegExp(`<${tag}>([\\s\\S]*?)<\\/${tag}>`, 'i');
-                const match = translatedText.match(regex);
-                
-                if (match && match[1]) {
-                    if (!batchResults[info.entryIndex]) {
-                        batchResults[info.entryIndex] = {};
-                    }
-                    batchResults[info.entryIndex][info.field] = match[1].trim();
-                }
-            }
-            
-            if (Object.keys(batchResults).length > 0) {
-                bookBatchState.setBatchStatus(batchIndex, 'success', { results: batchResults });
-                console.log(`✅ 批次 ${batchIndex + 1} 重试成功`);
-            } else {
-                throw new Error('未获取到有效结果');
-            }
-        }
-        
-    } catch (error) {
-        console.error(`❌ 批次 ${batchIndex + 1} 重试失败:`, error);
-        bookBatchState.setBatchStatus(batchIndex, 'error', { error: error.message });
-        bookTranslationErrors.value.push({
-            field: `批次 ${batchIndex + 1}`,
-            message: error.message
-        });
-    }
-};
 
 // 重试所有失败的批次
-const retryAllFailedBookBatches = async () => {
-    const failedBatchIndices = bookBatchState.getFailedBatches();
-    const failedCount = failedBatchIndices.length;
-    
-    if (failedCount === 0) {
-        return;
-    }
-    
-    console.log(`🔄 重试所有 ${failedCount} 个失败的批次:`, failedBatchIndices);
-    
-    // 获取模态框设置
-    const modalSettings = bookBatchTranslateModalRef.value;
-    const useConcurrent = modalSettings?.useConcurrentTranslation ?? false;
-    
-    if (useConcurrent && failedCount > 1) {
-        // 并发重试
-        console.log('⚡ 并发重试失败的批次');
-        const retryPromises = failedBatchIndices.map(index => retryBookBatch(index));
-        await Promise.allSettled(retryPromises);
-    } else {
-        // 串行重试
-        console.log('🔄 串行重试失败的批次');
-        for (const index of failedBatchIndices) {
-            await retryBookBatch(index);
-        }
-    }
-    
-    console.log('🎉 所有失败批次重试完成');
-};
 
 </script>
 
