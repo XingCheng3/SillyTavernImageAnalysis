@@ -1,9 +1,5 @@
-import {
-    buildWorldBookSystemPrompt,
-    collectStreamBatchResults,
-    getBookFieldsToTranslate,
-    parseWorldBookBatchResults,
-} from '@/utils/worldBookTranslationWorkflow';
+import { getBookFieldsToTranslate } from '@/utils/worldBookTranslationWorkflow';
+import { executeWorldBookBatch } from '@/utils/worldBookBatchExecutor';
 
 export function useWorldBookActions({
     editableData,
@@ -92,107 +88,73 @@ export function useWorldBookActions({
         bookTranslationErrors.value = bookTranslationErrors.value.filter(
             err => !err.field.startsWith(`批次 ${batchIndex + 1}`) && !err.field.startsWith(`批次${batchIndex + 1}`)
         );
-
+        bookTranslationMissingTags.value = bookTranslationMissingTags.value.filter(
+            item => !item.field.startsWith(`批次${batchIndex + 1} -`) && !item.field.startsWith(`批次 ${batchIndex + 1}`)
+        );
         bookStreamResults.value = bookStreamResults.value.filter(item => item.batchIndex !== batchIndex);
 
         const fieldsToTranslate = getBookFieldsToTranslate(bookTranslateFields);
-
         bookBatchState.setBatchStatus(batchIndex, 'translating');
 
-        try {
-            const { taggedText, fieldMap, totalTags } = buildBookTranslationTags(
-                editableData.value.book_entries,
-                batchIndices,
-                fieldsToTranslate,
-                editableData.value
-            );
-
-            if (!taggedText || totalTags === 0) {
-                bookBatchState.setBatchStatus(batchIndex, 'success', { results: {} });
-                return;
-            }
-
-            if (useStream) {
-                const result = await bookStreamTranslate({
-                    apiUrl: apiSettings.value.url,
-                    apiKey: apiSettings.value.key,
-                    model: apiSettings.value.model,
-                    systemPrompt: buildWorldBookSystemPrompt(translationConfig.value, buildTranslationPrompt),
-                    userContent: taggedText,
-                    tagMap: fieldMap,
-                    onProgress: (progressData) => {
-                        if (progressData.completed) {
-                            bookStreamResults.value.push({
-                                tag: progressData.tag,
-                                result: progressData.result,
-                                info: progressData.info,
-                                batchIndex,
-                                selected: true
-                            });
-                        }
-                    }
-                });
-
-                if (result.success) {
-                    const batchResults = collectStreamBatchResults({
-                        fieldMap,
-                        streamResults: result.results,
+        const result = await executeWorldBookBatch({
+            batchIndex,
+            batchIndices,
+            entries: editableData.value.book_entries,
+            editableData: editableData.value,
+            fieldsToTranslate,
+            useStream,
+            apiSettings: apiSettings.value,
+            translationConfig: translationConfig.value,
+            buildTranslationPrompt,
+            buildBookTranslationTags,
+            bookStreamTranslate,
+            bookRequestAbortControllers,
+            cancelBookTranslationFlag,
+            onStreamProgress: (progressData) => {
+                if (progressData.completed) {
+                    bookStreamResults.value.push({
+                        tag: progressData.tag,
+                        result: progressData.result,
+                        info: progressData.info,
+                        batchIndex,
+                        selected: true,
                     });
-                    bookBatchState.setBatchStatus(batchIndex, 'success', { results: batchResults });
-                } else {
-                    throw new Error(result.error || '重试失败');
                 }
-            } else {
-                const retryAbortController = new AbortController();
-                bookRequestAbortControllers.value.push(retryAbortController);
-                const response = await fetch(apiSettings.value.url + '/chat/completions', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'Authorization': `Bearer ${apiSettings.value.key}`
-                    },
-                    signal: retryAbortController.signal,
-                    body: JSON.stringify({
-                        model: apiSettings.value.model,
-                        messages: [
-                            {
-                                role: 'system',
-                                content: buildWorldBookSystemPrompt(translationConfig.value, buildTranslationPrompt)
-                            },
-                            { role: 'user', content: taggedText }
-                        ],
-                        temperature: 0.3
-                    })
-                });
+            },
+        });
 
-                bookRequestAbortControllers.value = bookRequestAbortControllers.value.filter(controller => controller !== retryAbortController);
+        if (result.status === 'cancelled') {
+            bookBatchState.setBatchStatus(batchIndex, 'error', { error: '用户取消' });
+            return;
+        }
 
-                if (!response.ok) {
-                    const errData = await response.json();
-                    throw new Error(errData.error?.message || '请求失败');
-                }
+        if (result.status === 'skipped') {
+            bookBatchState.setBatchStatus(batchIndex, 'success', { results: {} });
+            return;
+        }
 
-                const data = await response.json();
-                const translatedText = data.choices[0].message.content;
-                const { batchResults } = parseWorldBookBatchResults({
-                    fieldMap,
-                    translatedText,
-                });
-
-                if (Object.keys(batchResults).length > 0) {
-                    bookBatchState.setBatchStatus(batchIndex, 'success', { results: batchResults });
-                } else {
-                    throw new Error('未获取到有效结果');
-                }
-            }
-        } catch (error) {
-            console.error(`❌ 批次 ${batchIndex + 1} 重试失败:`, error);
-            bookBatchState.setBatchStatus(batchIndex, 'error', { error: error.message });
+        if (result.status === 'error') {
+            console.error(`❌ 批次 ${batchIndex + 1} 重试失败:`, result.error);
+            bookBatchState.setBatchStatus(batchIndex, 'error', { error: result.error });
             bookTranslationErrors.value.push({
                 field: `批次 ${batchIndex + 1}`,
-                message: error.message
+                message: result.error,
             });
+            return;
         }
+
+        const { batchResults, expectedTags = [], missingTags = [] } = result;
+        if (!useStream && (Object.keys(batchResults).length === 0 || missingTags.length === expectedTags.length)) {
+            const errorMessage = `批次 ${batchIndex + 1} 返回结果未遵循预期返回格式`;
+            bookBatchState.setBatchStatus(batchIndex, 'error', { error: errorMessage });
+            bookTranslationErrors.value.push({
+                field: `批次 ${batchIndex + 1}`,
+                message: errorMessage,
+            });
+            return;
+        }
+
+        bookBatchState.setBatchStatus(batchIndex, 'success', { results: batchResults });
     };
 
     const retryAllFailedBookBatches = async () => {

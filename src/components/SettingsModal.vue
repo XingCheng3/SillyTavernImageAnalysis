@@ -87,10 +87,23 @@
             <p v-if="saveMessage" :class="['save-result', { success: isSaveSuccess }]">{{ saveMessage }}</p>
         </div>
     </div>
+    <ConfirmDialog
+        :show="confirmDialog.show"
+        :title="confirmDialog.title"
+        :message="confirmDialog.message"
+        :description="confirmDialog.description"
+        :confirm-text="confirmDialog.confirmText"
+        :cancel-text="confirmDialog.cancelText"
+        :variant="confirmDialog.variant"
+        @confirm="confirmAction"
+        @close="closeConfirmDialog"
+    />
 </template>
 
 <script setup>
 import { ref, watch, onMounted, computed } from 'vue';
+import ConfirmDialog from '@/components/common/ConfirmDialog.vue';
+import { useConfirmDialog } from '@/composables/useConfirmDialog';
 import { useAppStore } from '@/stores/app';
 import { storeToRefs } from 'pinia';
 
@@ -143,6 +156,7 @@ const testMessage = ref('');
 const isTestSuccess = ref(false);
 const saveMessage = ref('');
 const isSaveSuccess = ref(false);
+const { confirmDialog, openConfirmDialog, closeConfirmDialog, confirmAction } = useConfirmDialog();
 
 const close = () => {
     emit('close');
@@ -205,18 +219,23 @@ const saveSettings = async () => {
 };
 
 const resetTranslationConfig = () => {
-    if (confirm('确定要将翻译配置重置为默认值吗？')) {
+    openConfirmDialog({
+        title: '重置翻译配置',
+        message: '确定要将翻译配置重置为默认值吗？',
+        description: '系统提示词和破限文本都会恢复为默认内容。',
+        confirmText: '重置',
+        variant: 'warning',
+    }, () => {
         appStore.resetTranslationConfig();
         saveMessage.value = '翻译配置已重置为默认值';
         isSaveSuccess.value = true;
-        
-        // 延迟2秒后清除消息
+
         setTimeout(() => {
             if (isSaveSuccess.value && saveMessage.value.includes('重置')) {
                 saveMessage.value = '';
             }
         }, 2000);
-    }
+    });
 };
 
 const fetchModels = async () => {

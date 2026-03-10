@@ -48,12 +48,25 @@
                 <button @click="save" class="action-button primary">保存</button>
                 <button @click="close" class="action-button">取消</button>
             </div>
+            <ConfirmDialog
+                :show="confirmDialog.show"
+                :title="confirmDialog.title"
+                :message="confirmDialog.message"
+                :description="confirmDialog.description"
+                :confirm-text="confirmDialog.confirmText"
+                :cancel-text="confirmDialog.cancelText"
+                :variant="confirmDialog.variant"
+                @confirm="confirmAction"
+                @close="closeConfirmDialog"
+            />
         </div>
     </div>
 </template>
 
 <script setup>
 import { ref, watch, computed } from 'vue';
+import ConfirmDialog from '@/components/common/ConfirmDialog.vue';
+import { useConfirmDialog } from '@/composables/useConfirmDialog';
 import { useAppStore } from '@/stores/app';
 import { storeToRefs } from 'pinia';
 
@@ -67,6 +80,7 @@ const appStore = useAppStore();
 const { translationConfig } = storeToRefs(appStore);
 
 const localPrompt = ref('');
+const { confirmDialog, openConfirmDialog, closeConfirmDialog, confirmAction } = useConfirmDialog();
 
 // 示例提示词
 const examples = {
@@ -88,16 +102,28 @@ const save = () => {
 };
 
 const resetToDefault = () => {
-    if (confirm('确定要重置为默认翻译提示词吗？')) {
+    openConfirmDialog({
+        title: '重置翻译提示词',
+        message: '确定要将当前翻译提示词重置为默认值吗？',
+        description: '这会覆盖你当前尚未保存的编辑内容。',
+        confirmText: '重置',
+        variant: 'warning',
+    }, () => {
         appStore.resetTranslationConfig();
         localPrompt.value = translationConfig.value.systemPrompt;
-    }
+    });
 };
 
 const useExample = (exampleText) => {
-    if (confirm('使用此示例提示词？这将替换当前内容。')) {
+    openConfirmDialog({
+        title: '应用示例提示词',
+        message: '确定要使用这个示例提示词吗？',
+        description: '当前文本会被示例内容替换。',
+        confirmText: '应用示例',
+        variant: 'warning',
+    }, () => {
         localPrompt.value = exampleText;
-    }
+    });
 };
 
 // 监听show属性变化，打开时加载当前配置

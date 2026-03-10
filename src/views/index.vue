@@ -841,197 +841,100 @@ const startBookBatchTranslation = async () => {
                 console.log('翻译被取消');
                 return { cancelled: true };
             }
-            
-            const batchIndices = batches[batchIndex];
-            console.log(`\n🔄 开始翻译第 ${batchIndex + 1}/${totalBatches} 批，包含 ${batchIndices.length} 个条目`);
-            
-            // 标记当前批次为翻译中
-            bookBatchState.setBatchStatus(batchIndex, 'translating');
-            
-            // 为当前批次构建标签文本
-            const { taggedText, fieldMap, totalTags } = buildBookTranslationTags(
-                editableData.value.book_entries,
-                batchIndices,
-                fieldsToTranslate,
-                editableData.value
-            );
 
-            if (!taggedText || totalTags === 0) {
+            const batchIndices = batches[batchIndex];
+            console.log(`
+🔄 开始翻译第 ${batchIndex + 1}/${totalBatches} 批，包含 ${batchIndices.length} 个条目`);
+            bookBatchState.setBatchStatus(batchIndex, 'translating');
+
+            const result = await executeWorldBookBatch({
+                batchIndex,
+                batchIndices,
+                entries: editableData.value.book_entries,
+                editableData: editableData.value,
+                fieldsToTranslate,
+                useStream,
+                apiSettings: apiSettings.value,
+                translationConfig: translationConfig.value,
+                buildTranslationPrompt,
+                buildBookTranslationTags,
+                bookStreamTranslate,
+                bookRequestAbortControllers,
+                cancelBookTranslationFlag,
+                onStreamProgress: (progressData) => {
+                    console.log('流式进度更新:', progressData);
+                    if (progressData.completed) {
+                        bookTranslatedCount.value++;
+                        bookStreamResults.value.push({
+                            tag: progressData.tag,
+                            result: progressData.result,
+                            info: progressData.info,
+                            batchIndex,
+                            selected: true,
+                        });
+                    }
+                },
+            });
+
+            if (result.status === 'cancelled') {
+                console.log('翻译被取消');
+                bookBatchState.setBatchStatus(batchIndex, 'error', { error: '用户取消' });
+                return { cancelled: true };
+            }
+
+            if (result.status === 'skipped') {
                 console.warn(`批次 ${batchIndex + 1} 没有可翻译内容，跳过`);
                 bookBatchState.setBatchStatus(batchIndex, 'success', { results: {} });
                 return { success: true, skipped: true };
             }
-            
-            console.log(`批次 ${batchIndex + 1} 包含 ${totalTags} 个待翻译字段`);
-        
-            // 判断使用流式还是普通翻译
-            try {
-                if (useStream) {
-                    console.log(`批次 ${batchIndex + 1} 使用流式翻译模式`);
-                    
-                    // 流式翻译 - 支持实时预览
-                    const result = await bookStreamTranslate({
-                        apiUrl: apiSettings.value.url,
-                        apiKey: apiSettings.value.key,
-                        model: apiSettings.value.model,
-                        systemPrompt: buildWorldBookSystemPrompt(translationConfig.value, buildTranslationPrompt),
-                        userContent: taggedText,
-                        tagMap: fieldMap,
-                        onProgress: (progressData) => {
-                            // 实时更新进度
-                            console.log('流式进度更新:', progressData);
-                            if (progressData.completed) {
-                                bookTranslatedCount.value++;
-                                
-                                // 将完成的结果添加到流式结果列表（用于实时预览）
-                                bookStreamResults.value.push({
-                                    tag: progressData.tag,
-                                    result: progressData.result,
-                                    info: progressData.info,
-                                    batchIndex: batchIndex,
-                                    selected: true // 默认选中
-                                });
-                            }
-                        }
-        });
 
-                    if (cancelBookTranslationFlag.value) {
-                        console.log('翻译被取消');
-                        bookBatchState.setBatchStatus(batchIndex, 'error', { error: '用户取消' });
-                        return { cancelled: true };
-                    }
-                    
-                    if (!result.success) {
-                        throw new Error(result.error || '流式翻译失败');
-                    }
-                    
-                    // 解析流式翻译结果
-                    const batchResults = collectStreamBatchResults({
-                        fieldMap,
-                        streamResults: result.results,
-                    });
-                    const { missingTags } = parseWorldBookBatchResults({
-                        fieldMap,
-                        translatedText: Object.keys(result.results)
-                            .map(tag => `<${tag}>${result.results[tag]}</${tag}>`)
-                            .join('\n\n'),
-                    });
-                    
-                    // 标记批次成功
-                    bookBatchState.setBatchStatus(batchIndex, 'success', { results: batchResults });
-                    console.log(`✅ 批次 ${batchIndex + 1} 翻译完成，成功 ${Object.keys(batchResults).length} 个条目`);
-                    
-                    // 记录缺失标签
-                    if (missingTags.length > 0) {
-                        const missingItems = normalizeWorldBookMissingItems({ batchIndex, missingTags });
-                        bookTranslationMissingTags.value.push(...missingItems);
-                        missingItems.forEach(({ field, tag }) => {
-                            bookTranslationErrors.value.push({
-                                field,
-                                message: `标签 ${tag} 在返回结果中丢失`
-                            });
-                        });
-                    }
-                    
-                } else {
-                    console.log(`批次 ${batchIndex + 1} 使用普通翻译模式`);
-        
-                    // 普通翻译（非流式）
-        const batchAbortController = new AbortController();
-        bookRequestAbortControllers.value.push(batchAbortController);
-        const response = await fetch(apiSettings.value.url + '/chat/completions', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${apiSettings.value.key}`
-            },
-            signal: batchAbortController.signal,
-            body: JSON.stringify({
-                model: apiSettings.value.model,
-                messages: [
-                    { 
-                        role: 'system', 
-                                    content: buildWorldBookSystemPrompt(translationConfig.value, buildTranslationPrompt)
-                    },
-                    { role: 'user', content: taggedText }
-                ],
-                temperature: 0.3
-            })
-        });
-
-        bookRequestAbortControllers.value = bookRequestAbortControllers.value.filter(controller => controller !== batchAbortController);
-
-        if (!response.ok) {
-            const errData = await response.json();
-            const errorInfo = {
-                status: response.status,
-                statusText: response.statusText,
-                ...errData.error
-            };
-                        throw new Error(JSON.stringify(errorInfo, null, 2));
-        }
-
-        const data = await response.json();
-        if (!data.choices || data.choices.length === 0) {
-            throw new Error('API未返回任何结果');
-        }
-
-        const translatedText = data.choices[0].message.content;
-                    console.log(`批次 ${batchIndex + 1} API返回结果:`, translatedText.substring(0, 200));
-
-                    // 解析当前批次的翻译结果
-                    const { batchResults, missingTags, expectedTags } = parseWorldBookBatchResults({
-                        fieldMap,
-                        translatedText,
-                    });
-                    bookTranslatedCount.value += Object.values(batchResults).reduce((sum, fields) => sum + Object.keys(fields).length, 0);
-
-                    console.log('普通翻译 - 世界书翻译结果:', batchResults);
-                    console.log('普通翻译 - 丢失的标签:', missingTags);
-        
-                    // 若当前批次返回不符合预期格式
-                    if (Object.keys(batchResults).length === 0 || missingTags.length === expectedTags.length) {
-                        const badFormatMsg = `批次 ${batchIndex + 1} 返回结果未遵循预期返回格式`;
-                        bookBatchState.setBatchStatus(batchIndex, 'error', { error: badFormatMsg });
-                        bookTranslationErrors.value.push({ 
-                            field: `批次 ${batchIndex + 1}`, 
-                            message: badFormatMsg 
-                        });
-                        console.error(`❌ 批次 ${batchIndex + 1} 翻译失败`);
-                        return { error: badFormatMsg };
-                    }
-                    
-                    // 标记当前批次成功
-                    bookBatchState.setBatchStatus(batchIndex, 'success', { results: batchResults });
-                    console.log(`✅ 批次 ${batchIndex + 1} 翻译完成，成功 ${Object.keys(batchResults).length} 个条目`);
-
-                    // 记录丢失的标签作为错误
-                    if (missingTags.length > 0) {
-                        const missingItems = normalizeWorldBookMissingItems({ batchIndex, missingTags });
-                        bookTranslationMissingTags.value.push(...missingItems);
-                        missingItems.forEach(({ field, tag }) => {
-                            bookTranslationErrors.value.push({
-                                field,
-                                message: `标签 ${tag} 在返回结果中丢失`
-                            });
-                        });
-                    }
-                } // 结束 else 块（普通翻译模式）
-                
-            } catch (batchError) {
-                // 单个批次翻译失败
-                console.error(`❌ 批次 ${batchIndex + 1} 翻译失败:`, batchError);
-                bookBatchState.setBatchStatus(batchIndex, 'error', { error: batchError.message });
+            if (result.status === 'error') {
+                const errorMessage = result.error || `批次 ${batchIndex + 1} 翻译失败`;
+                console.error(`❌ 批次 ${batchIndex + 1} 翻译失败:`, errorMessage);
+                bookBatchState.setBatchStatus(batchIndex, 'error', { error: errorMessage });
                 bookTranslationErrors.value.push({
                     field: `批次 ${batchIndex + 1}`,
-                    message: batchError.message
+                    message: errorMessage,
                 });
-                return { error: batchError.message };
+                return { error: errorMessage };
             }
-            
+
+            const { batchResults, missingTags = [], expectedTags = [] } = result;
+            if (!useStream) {
+                console.log(`批次 ${batchIndex + 1} API返回结果:`, result.translatedText?.substring(0, 200));
+                console.log('普通翻译 - 世界书翻译结果:', batchResults);
+                console.log('普通翻译 - 丢失的标签:', missingTags);
+            }
+
+            bookTranslatedCount.value += result.translatedItemsCount || 0;
+
+            if (!useStream && (Object.keys(batchResults).length === 0 || missingTags.length === expectedTags.length)) {
+                const badFormatMsg = `批次 ${batchIndex + 1} 返回结果未遵循预期返回格式`;
+                bookBatchState.setBatchStatus(batchIndex, 'error', { error: badFormatMsg });
+                bookTranslationErrors.value.push({
+                    field: `批次 ${batchIndex + 1}`,
+                    message: badFormatMsg,
+                });
+                console.error(`❌ 批次 ${batchIndex + 1} 翻译失败`);
+                return { error: badFormatMsg };
+            }
+
+            bookBatchState.setBatchStatus(batchIndex, 'success', { results: batchResults });
+            console.log(`✅ 批次 ${batchIndex + 1} 翻译完成，成功 ${Object.keys(batchResults).length} 个条目`);
+
+            if (missingTags.length > 0) {
+                const missingItems = normalizeWorldBookMissingItems({ batchIndex, missingTags });
+                bookTranslationMissingTags.value.push(...missingItems);
+                missingItems.forEach(({ field, tag }) => {
+                    bookTranslationErrors.value.push({
+                        field,
+                        message: `标签 ${tag} 在返回结果中丢失`,
+                    });
+                });
+            }
+
             return { success: true };
         }; // 结束 translateBatch 函数定义
-        
         // 第二步：根据并发设置执行批次翻译
         if (useConcurrent && batches.length > 1) {
             console.log('🚀 使用并发模式翻译多个批次');
