@@ -487,6 +487,39 @@ const {
 });
 
 const {
+    showBatchTranslateModal,
+    selectedFields,
+    isTranslating,
+    currentTranslatingField,
+    translatedCount,
+    totalFieldsToTranslate,
+    translationErrors,
+    isTranslationComplete,
+    cancelTranslationFlag,
+    basicTranslationAbortController,
+    isTranslationError,
+    canRetryTranslation,
+    selectAllFields,
+    deselectAllFields,
+    startBatchTranslation,
+    cancelTranslation,
+    closeBatchTranslateModal,
+} = useBasicTranslation({
+    editableData,
+    apiSettings,
+    translationConfig,
+    checkAndPromptApiConfig,
+    startTimeTracking,
+    stopTimeTracking,
+    prepareTranslationCompare,
+    buildTranslationPrompt,
+    getFriendlyErrorMessage,
+    mapErrorCode,
+    openErrorModal,
+    showOperationNotice,
+});
+
+const {
     showCompareModal,
     translationCompareData,
     translationResults,
@@ -519,39 +552,6 @@ const {
     bookTranslationDuration,
     formattedAdvancedStartTime,
     advancedTranslationDuration,
-});
-
-const {
-    showBatchTranslateModal,
-    selectedFields,
-    isTranslating,
-    currentTranslatingField,
-    translatedCount,
-    totalFieldsToTranslate,
-    translationErrors,
-    isTranslationComplete,
-    cancelTranslationFlag,
-    basicTranslationAbortController,
-    isTranslationError,
-    canRetryTranslation,
-    selectAllFields,
-    deselectAllFields,
-    startBatchTranslation,
-    cancelTranslation,
-    closeBatchTranslateModal,
-} = useBasicTranslation({
-    editableData,
-    apiSettings,
-    translationConfig,
-    checkAndPromptApiConfig,
-    startTimeTracking,
-    stopTimeTracking,
-    prepareTranslationCompare,
-    buildTranslationPrompt,
-    getFriendlyErrorMessage,
-    mapErrorCode,
-    openErrorModal,
-    showOperationNotice,
 });
 
 // 计算属性
