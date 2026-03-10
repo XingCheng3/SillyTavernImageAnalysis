@@ -1,90 +1,74 @@
 <template>
     <div v-if="show" class="modal-overlay">
-        <div class="modal-content">
-            <h2>设置</h2>
-            
-            <!-- API设置区域 -->
-            <div class="config-section">
-                <h3>API配置</h3>
-                
-                <div class="form-group">
-                    <label for="api-url">API URL:</label>
-                    <input id="api-url" type="text" v-model="apiUrl" placeholder="例如: https://api.openai.com/v1" />
+        <div class="modal-content settings-modal">
+            <div class="modal-header">
+                <div>
+                    <p class="modal-eyebrow">Workspace Setup</p>
+                    <h2>设置</h2>
                 </div>
+                <button @click="close" class="close-button" aria-label="关闭">&times;</button>
+            </div>
 
-                <div class="form-group">
-                    <label for="api-key">API Key:</label>
-                    <input id="api-key" type="password" v-model="apiKey" placeholder="请输入您的API Key" />
-                </div>
-
-                <div class="form-group">
-                    <label for="model-name">模型名称:</label>
-                    <input id="model-name" type="text" v-model="apiModel" placeholder="例如: gpt-4o" />
-                </div>
-
-                <div class="form-group">
-                    <label for="model-select">选择预设模型:</label>
-                    <div class="model-selection">
-                        <select id="model-select" v-model="selectedPresetModel" @change="onModelSelect" :disabled="isLoadingModels || !models.length">
-                            <option value="">-- 请选择 --</option>
-                            <option v-if="isLoadingModels" value="">正在加载...</option>
-                            <option v-for="model in models" :key="model.id" :value="model.id">{{ model.id }}</option>
-                        </select>
-                        <button @click="fetchModels" :disabled="isLoadingModels">
-                            {{ isLoadingModels ? '...' : '获取模型列表' }}
-                        </button>
+            <div class="modal-body">
+                <div class="config-section card-shell">
+                    <div class="section-heading">
+                        <div>
+                            <h3>API 配置</h3>
+                            <p>配置模型接口、选择模型并验证连接状态。</p>
+                        </div>
+                        <div class="status-chip" :class="`is-${appStore.apiStatus}`">{{ appStore.apiStatus }}</div>
                     </div>
-                    <p v-if="error" class="error-text">{{ error }}</p>
-                </div>
 
-                <div class="api-actions">
-                    <button @click="testApiConnection" :disabled="isLoadingModels || isSaving">测试连接</button>
-                    <p v-if="testMessage" :class="['test-result', { success: isTestSuccess }]">{{ testMessage }}</p>
+                    <div class="form-grid">
+                        <div class="form-group full-span">
+                            <label for="api-url">API URL</label>
+                            <input id="api-url" type="text" v-model="apiUrl" placeholder="例如: https://api.openai.com/v1" />
+                        </div>
+
+                        <div class="form-group full-span">
+                            <label for="api-key">API Key</label>
+                            <input id="api-key" type="password" v-model="apiKey" placeholder="请输入您的 API Key" />
+                        </div>
+
+                        <div class="form-group">
+                            <label for="model-name">模型名称</label>
+                            <input id="model-name" type="text" v-model="apiModel" placeholder="例如: gpt-4o" />
+                        </div>
+
+                        <div class="form-group">
+                            <label for="model-select">预设模型</label>
+                            <div class="model-selection">
+                                <select id="model-select" v-model="selectedPresetModel" @change="onModelSelect" :disabled="isLoadingModels || !models.length">
+                                    <option value="">-- 请选择 --</option>
+                                    <option v-if="isLoadingModels" value="">正在加载...</option>
+                                    <option v-for="model in models" :key="model.id" :value="model.id">{{ model.id }}</option>
+                                </select>
+                                <button @click="fetchModels" :disabled="isLoadingModels" class="action-button secondary compact-btn">
+                                    {{ isLoadingModels ? '加载中...' : '获取模型列表' }}
+                                </button>
+                            </div>
+                            <p v-if="error" class="error-text">{{ error }}</p>
+                        </div>
+                    </div>
+
+                    <div class="api-actions">
+                        <button @click="testApiConnection" :disabled="isLoadingModels || isSaving" class="action-button secondary">
+                            测试连接
+                        </button>
+                        <p v-if="testMessage" :class="['inline-feedback', { success: isTestSuccess }]">{{ testMessage }}</p>
+                    </div>
                 </div>
             </div>
 
-            <!-- 翻译配置区域 -->
-            <!-- <div class="config-section">
-                <h3>翻译配置</h3>
-                
-                <div class="form-group">
-                    <label for="system-prompt">翻译提示词:</label>
-                    <textarea 
-                        id="system-prompt" 
-                        v-model="systemPrompt" 
-                        placeholder="输入自定义翻译提示词..."
-                        rows="4"
-                    ></textarea>
-                    <small class="field-description">
-                        用于指导AI进行翻译的系统提示词，影响翻译风格和质量
-                    </small>
+            <div class="modal-footer">
+                <p v-if="saveMessage" :class="['inline-feedback', { success: isSaveSuccess }]">{{ saveMessage }}</p>
+                <div class="footer-actions">
+                    <button @click="close" :disabled="isSaving" class="action-button secondary ghost-btn">取消</button>
+                    <button @click="saveSettings" class="action-button primary" :disabled="isSaving">
+                        {{ isSaving ? '保存中...' : '保存设置' }}
+                    </button>
                 </div>
-
-                <div class="form-group">
-                    <label for="jailbreak-text">破限文本:</label>
-                    <textarea 
-                        id="jailbreak-text" 
-                        v-model="jailbreakText" 
-                        placeholder="输入破限文本..."
-                        rows="3"
-                    ></textarea>
-                    <small class="field-description">
-                        用于绕过可能的内容限制，确保翻译的完整性
-                    </small>
-                </div>
-
-                <div class="translation-actions">
-                    <button @click="resetTranslationConfig" class="secondary">重置为默认值</button>
-                </div>
-            </div> -->
-
-            <div class="modal-actions">
-                <button @click="saveSettings" class="primary" :disabled="isSaving">
-                    {{ isSaving ? '保存中...' : '保存' }}
-                </button>
-                <button @click="close" :disabled="isSaving">取消</button>
             </div>
-            <p v-if="saveMessage" :class="['save-result', { success: isSaveSuccess }]">{{ saveMessage }}</p>
         </div>
     </div>
     <ConfirmDialog
@@ -116,7 +100,6 @@ const emit = defineEmits(['close', 'save']);
 const appStore = useAppStore();
 const { apiSettings, translationConfig } = storeToRefs(appStore);
 
-// 使用计算属性来代理 v-model
 const apiUrl = computed({
     get: () => apiSettings.value.url,
     set: (value) => appStore.setApiSettings({ ...apiSettings.value, url: value })
@@ -130,7 +113,6 @@ const apiModel = computed({
     set: (value) => appStore.setApiSettings({ ...apiSettings.value, model: value })
 });
 
-// 翻译配置的计算属性
 const systemPrompt = computed({
     get: () => translationConfig.value.systemPrompt,
     set: (value) => {
@@ -180,16 +162,12 @@ const saveSettings = async () => {
     isSaveSuccess.value = false;
 
     try {
-        // 保存API设置到 store 和 Cookie
         appStore.setApiSettings({
             url: apiUrl.value,
             key: apiKey.value,
             model: apiModel.value
         });
-        
-        // 保存翻译配置到 localStorage（已通过计算属性自动保存）
-        
-        // 通知父组件设置已更新
+
         emit('save', {
             apiUrl: apiUrl.value,
             apiKey: apiKey.value,
@@ -199,11 +177,10 @@ const saveSettings = async () => {
                 jailbreakText: jailbreakText.value
             }
         });
-        
+
         saveMessage.value = '设置已成功保存！';
         isSaveSuccess.value = true;
-        
-        // 延迟2秒后清除消息
+
         setTimeout(() => {
             if (isSaveSuccess.value) {
                 saveMessage.value = '';
@@ -240,7 +217,7 @@ const resetTranslationConfig = () => {
 
 const fetchModels = async () => {
     if (!apiUrl.value || !apiKey.value) {
-        error.value = '请先输入API URL和API Key。';
+        error.value = '请先输入 API URL 和 API Key。';
         return;
     }
 
@@ -275,7 +252,7 @@ const fetchModels = async () => {
 
 const testApiConnection = async () => {
     if (!apiUrl.value || !apiKey.value || !apiModel.value) {
-        testMessage.value = '请先输入API URL、API Key和选择模型。';
+        testMessage.value = '请先输入 API URL、API Key 和选择模型。';
         isTestSuccess.value = false;
         appStore.setApiStatus('untested');
         return;
@@ -312,7 +289,6 @@ const testApiConnection = async () => {
         } else {
             throw new Error('API返回了无效的响应。');
         }
-
     } catch (err) {
         testMessage.value = `测试失败: ${err.message}`;
         isTestSuccess.value = false;
@@ -322,14 +298,12 @@ const testApiConnection = async () => {
 };
 
 onMounted(() => {
-    // 加载保存的设置
     appStore.loadApiSettings();
     appStore.loadTranslationConfig();
 });
 
 watch(() => props.show, (newVal) => {
     if (newVal) {
-        // 每次打开弹窗时，重新加载设置
         appStore.loadApiSettings();
         appStore.loadTranslationConfig();
         selectedPresetModel.value = '';
@@ -342,174 +316,196 @@ watch(() => props.show, (newVal) => {
 </script>
 
 <style scoped>
-.modal-overlay {
-    position: fixed;
-    top: 0;
-    left: 0;
-    width: 100%;
-    height: 100%;
-    background-color: rgba(0, 0, 0, 0.6);
+.settings-modal {
+    width: min(100%, 920px);
+}
+
+.modal-header {
     display: flex;
-    justify-content: center;
-    align-items: center;
-    z-index: 1000;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 16px;
 }
 
-.modal-content {
-    background: white;
-    padding: 25px 30px;
-    border-radius: 8px;
-    box-shadow: 0 5px 15px rgba(0,0,0,0.3);
-    width: 90%;
-    max-width: 500px;
+.modal-eyebrow {
+    margin: 0 0 6px;
+    font-size: 12px;
+    font-weight: 800;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: #64748b;
 }
 
-h2 {
-    margin-top: 0;
+.modal-header h2 {
+    margin: 0;
+}
+
+.card-shell {
+    border-radius: 20px;
+    border: 1px solid #e2e8f0;
+    background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
+    padding: 22px;
+}
+
+.section-heading {
+    display: flex;
+    justify-content: space-between;
+    gap: 16px;
+    align-items: flex-start;
     margin-bottom: 20px;
-    color: #333;
+}
+
+.section-heading h3 {
+    margin: 0 0 8px;
+    color: #0f172a;
+}
+
+.section-heading p {
+    margin: 0;
+    color: #64748b;
+    line-height: 1.6;
+}
+
+.status-chip {
+    padding: 7px 12px;
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: 800;
+    text-transform: capitalize;
+    background: #f8fafc;
+    color: #64748b;
+    border: 1px solid #e2e8f0;
+}
+
+.status-chip.is-success {
+    background: #dcfce7;
+    border-color: #bbf7d0;
+    color: #15803d;
+}
+
+.status-chip.is-failed {
+    background: #fee2e2;
+    border-color: #fecaca;
+    color: #b91c1c;
+}
+
+.status-chip.is-testing {
+    background: #dbeafe;
+    border-color: #bfdbfe;
+    color: #1d4ed8;
+}
+
+.form-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 16px;
 }
 
 .form-group {
-    margin-bottom: 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.form-group.full-span {
+    grid-column: 1 / -1;
 }
 
 .form-group label {
-    display: block;
-    margin-bottom: 8px;
-    font-weight: 500;
-    color: #555;
+    color: #334155;
+    font-size: 13px;
+    font-weight: 700;
 }
 
 .form-group input,
 .form-group select {
     width: 100%;
-    padding: 10px;
-    border: 1px solid #ccc;
-    border-radius: 4px;
-    font-size: 16px;
+    min-height: 48px;
+    border-radius: 14px;
+    border: 1px solid #dbe3ee;
+    background: #fff;
+    padding: 12px 14px;
+    font-size: 14px;
+}
+
+.form-group input:focus,
+.form-group select:focus {
+    outline: none;
+    border-color: #93c5fd;
+    box-shadow: 0 0 0 4px rgba(59, 130, 246, 0.12);
 }
 
 .model-selection {
-    display: flex;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
     gap: 10px;
 }
 
-.model-selection select {
-    flex-grow: 1;
+.compact-btn {
+    min-width: 136px;
 }
 
 .api-actions {
-    margin-bottom: 20px;
-}
-
-.modal-actions {
-    margin-top: 25px;
-    text-align: right;
+    margin-top: 20px;
     display: flex;
-    gap: 10px;
-    justify-content: flex-end;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 12px;
 }
 
-button {
-    padding: 10px 20px;
-    border-radius: 4px;
-    border: 1px solid #ccc;
-    cursor: pointer;
-    background-color: #f0f0f0;
-    transition: background-color 0.2s;
+.modal-footer {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 16px;
+    flex-wrap: wrap;
 }
 
-button:hover {
-    background-color: #e0e0e0;
+.footer-actions {
+    display: flex;
+    gap: 12px;
+    flex-wrap: wrap;
 }
 
-button.primary {
-    background-color: #4a89dc;
-    color: white;
-    border-color: #4a89dc;
+.inline-feedback {
+    margin: 0;
+    color: #dc2626;
+    font-size: 14px;
 }
 
-button.primary:hover {
-    background-color: #3b7dd8;
-}
-
-button:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
+.inline-feedback.success {
+    color: #16a34a;
 }
 
 .error-text {
-    color: #e74c3c;
-    margin-top: 8px;
-    font-size: 14px;
+    margin: 0;
+    color: #dc2626;
+    font-size: 13px;
 }
 
-.test-result,
-.save-result {
-    margin-top: 15px;
-    text-align: right;
-    font-size: 14px;
-    color: #e74c3c; /* Error color */
+.ghost-btn {
+    background: #fff;
+    color: #334155;
 }
 
-.test-result.success,
-.save-result.success {
-    color: #2ecc71; /* Success color */
-}
-
-.config-section {
-    margin-bottom: 20px;
-}
-
-.config-section h3 {
-    margin-top: 0;
-    margin-bottom: 10px;
-    color: #333;
-}
-
-.field-description {
-    display: block;
-    margin-top: 5px;
-    font-size: 12px;
-    color: #999;
-}
-
-.translation-actions {
-    margin-top: 10px;
-    text-align: right;
-}
-
-button.secondary {
-    background-color: #f0f0f0;
-    color: #333;
-    border-color: #ccc;
-}
-
-button.secondary:hover {
-    background-color: #e0e0e0;
-}
-
-/* 移动端适配 */
-@media (max-width: 768px) {
-    .modal-content {
-        width: 95%;
-        max-width: 95%;
-        padding: 20px;
-    }
-
+@media (max-width: 900px) {
+    .form-grid,
     .model-selection {
+        grid-template-columns: 1fr;
+    }
+}
+
+@media (max-width: 640px) {
+    .modal-footer,
+    .footer-actions,
+    .api-actions {
         flex-direction: column;
         align-items: stretch;
     }
 
-    .modal-actions {
-        flex-wrap: wrap;
-        justify-content: center;
-    }
-
-    button {
-        padding: 10px 14px;
+    .footer-actions > button,
+    .api-actions > button {
+        width: 100%;
     }
 }
-</style> 
+</style>
