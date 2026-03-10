@@ -3,7 +3,7 @@ set -eu
 
 PROJECT_ROOT="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
 DIST_DIR="$PROJECT_ROOT/dist"
-TARGET_DIR="/www/wwwroot/Web/TextCreateImage"
+TARGET_DIR="/www/wwwroot/Web/SillyTavernImageAnalysis"
 
 if [ ! -d "$DIST_DIR" ]; then
   echo "[deploy-bt] dist 目录不存在：$DIST_DIR" >&2
