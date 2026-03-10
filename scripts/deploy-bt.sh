@@ -22,4 +22,11 @@ else
   cp -R "$DIST_DIR/." "$TARGET_DIR/"
 fi
 
+DEPLOY_TIME="$(date '+%Y-%m-%d %H:%M:%S %Z')"
+cat > "$TARGET_DIR/deploy-info.txt" <<EOF
+Last deployed: $DEPLOY_TIME
+Source dist: $DIST_DIR
+Target dir: $TARGET_DIR
+EOF
+
 echo "[deploy-bt] 已同步 dist -> $TARGET_DIR"
