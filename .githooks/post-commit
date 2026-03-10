@@ -1,0 +1,28 @@
+#!/usr/bin/env sh
+set -u
+
+PROJECT_ROOT="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
+
+if [ "${NO_POST_COMMIT_DEPLOY:-0}" = "1" ]; then
+  echo "[post-commit] 已跳过自动构建与部署（NO_POST_COMMIT_DEPLOY=1）"
+  exit 0
+fi
+
+if [ ! -f "$PROJECT_ROOT/package.json" ]; then
+  echo "[post-commit] 未找到 package.json，跳过"
+  exit 0
+fi
+
+if [ ! -d "$PROJECT_ROOT/node_modules" ]; then
+  echo "[post-commit] 未找到 node_modules，跳过自动构建与部署"
+  exit 0
+fi
+
+echo "[post-commit] 开始自动构建并同步宝塔站点..."
+if npm --prefix "$PROJECT_ROOT" run build; then
+  echo "[post-commit] 自动构建与部署完成"
+else
+  echo "[post-commit] 自动构建或部署失败，请手动检查" >&2
+fi
+
+exit 0
