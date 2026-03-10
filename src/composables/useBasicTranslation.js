@@ -7,7 +7,7 @@ export function useBasicTranslation({
     checkAndPromptApiConfig,
     startTimeTracking,
     stopTimeTracking,
-    prepareTranslationCompare,
+    getPrepareTranslationCompare,
     buildTranslationPrompt,
     getFriendlyErrorMessage,
     mapErrorCode,
@@ -192,6 +192,10 @@ export function useBasicTranslation({
                 return;
             }
 
+            const prepareTranslationCompare = getPrepareTranslationCompare?.();
+            if (typeof prepareTranslationCompare !== 'function') {
+                throw new Error('翻译结果对比处理器未初始化');
+            }
             prepareTranslationCompare(translationResults, missingTags, 'basic');
 
             if (missingTags.length > 0) {

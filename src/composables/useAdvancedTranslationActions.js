@@ -10,7 +10,7 @@ export function useAdvancedTranslationActions({
     buildTranslationPrompt,
     startAdvancedTimeTracking,
     stopTimeTracking,
-    prepareAdvancedTranslationCompare,
+    getPrepareAdvancedTranslationCompare,
     getFriendlyErrorMessage,
     mapErrorCode,
     openErrorModal,
@@ -220,6 +220,10 @@ export function useAdvancedTranslationActions({
                 });
             }
 
+            const prepareAdvancedTranslationCompare = getPrepareAdvancedTranslationCompare?.();
+            if (typeof prepareAdvancedTranslationCompare !== 'function') {
+                throw new Error('高级翻译结果对比处理器未初始化');
+            }
             prepareAdvancedTranslationCompare(results, missingTags);
         } catch (err) {
             if (err?.name === 'AbortError') {
