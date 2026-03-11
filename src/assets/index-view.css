@@ -545,19 +545,22 @@ h1 {
   display: flex;
   justify-content: center;
   align-items: center;
-  padding: 22px;
+  padding: 18px;
   background: rgba(28, 25, 23, 0.42);
   backdrop-filter: blur(6px);
 }
 
 .modal-content {
   width: min(100%, 980px);
-  max-height: min(92vh, 980px);
+  max-height: min(94dvh, 980px);
   background: linear-gradient(180deg, #ffffff 0%, #fbfdff 100%);
   border: 1px solid rgba(226, 232, 240, 0.95);
   border-radius: 24px;
   box-shadow: var(--shadow-lg);
   overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
 }
 
 .batch-translate-modal,
@@ -567,6 +570,7 @@ h1 {
 
 .book-batch-translate-modal {
   width: min(100%, 1220px);
+  max-height: min(94dvh, 980px);
 }
 
 .global-replace-modal,
@@ -579,6 +583,7 @@ h1 {
   padding: 20px 24px;
   border-bottom: 1px solid var(--line-soft);
   background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
+  flex: 0 0 auto;
 }
 
 .modal-header h2,
@@ -592,12 +597,19 @@ h1 {
 
 .modal-body {
   padding: 22px 24px;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
 }
 
 .modal-footer {
   padding: 18px 24px 22px;
   border-top: 1px solid var(--line-soft);
   background: #fbfdff;
+  flex: 0 0 auto;
+  position: sticky;
+  bottom: 0;
+  z-index: 1;
 }
 
 .close-button {
@@ -740,16 +752,23 @@ h1 {
     align-items: stretch;
   }
 
+  .modal-backdrop,
+  .modal-overlay {
+    padding: 10px;
+  }
+
   .book-batch-translate-modal,
   .modal-content {
-    width: min(100%, 100%);
+    width: 100%;
+    max-height: calc(100dvh - 20px);
+    border-radius: 18px;
   }
 
   .modal-body,
   .modal-header,
   .modal-footer {
-    padding-left: 18px;
-    padding-right: 18px;
+    padding-left: 14px;
+    padding-right: 14px;
   }
 
   .preview-compare,
@@ -769,13 +788,23 @@ h1 {
 
 @media (max-width: 640px) {
   .container {
-    padding: 16px 14px 28px;
+    padding: 14px 10px 24px;
+  }
+
+  .modal-backdrop,
+  .modal-overlay {
+    padding: 6px;
+  }
+
+  .modal-content {
+    max-height: calc(100dvh - 12px);
+    border-radius: 14px;
   }
 
   .results,
   .character-info-section,
   .upload-area {
-    padding: 18px;
+    padding: 16px;
   }
 
   .tabs {

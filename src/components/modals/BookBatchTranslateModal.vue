@@ -360,6 +360,17 @@ defineExpose({
 @media (max-width: 900px) {
     .book-entry-selection-list {
         grid-template-columns: 1fr;
+        max-height: 300px;
+    }
+}
+
+@media (max-width: 640px) {
+    .book-entry-selection-list {
+        max-height: 240px;
+    }
+
+    .book-entry-option {
+        padding: 12px;
     }
 }
 </style>
