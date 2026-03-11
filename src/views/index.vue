@@ -389,6 +389,7 @@ const worldBookAIGenerateForm = reactive({
     openingCount: 3,
     notes: '',
     replaceExisting: false,
+    applyOpeningsToGreetings: true,
 });
 
 const showWorldBookAIPatchModal = ref(false);
@@ -400,6 +401,7 @@ const worldBookAIPatchForm = reactive({
     paragraphIndex: 0,
     instruction: '',
     keepStyle: true,
+    confirmReviewedDiff: false,
 });
 
 // 世界书流式翻译和分批支持
@@ -477,6 +479,7 @@ watch(
     ],
     () => {
         if (worldBookAIPatchPreview.value) {
+            worldBookAIPatchForm.confirmReviewedDiff = false;
             clearWorldBookAIPatchPreview();
         }
     },
@@ -862,15 +865,23 @@ const handleApplyWorldBookAIDraft = () => {
 
         const result = applyDraftToEditableData(editableData.value, worldBookAIDraft.value, {
             replaceExisting: worldBookAIGenerateForm.replaceExisting,
+            applyOpeningsToGreetings: worldBookAIGenerateForm.applyOpeningsToGreetings,
         });
 
         selectedBookEntries.value = new Array(editableData.value.book_entries.length).fill(false);
 
+        const openingTip = result.openingCount > 0
+            ? `，同步 ${result.openingCount} 个开场分支`
+            : '';
+        const greetingTip = result.greetingsSyncedCount > 0
+            ? `，更新了 ${result.greetingsSyncedCount} 条开场白`
+            : '';
+
         showOperationNotice({
             type: 'success',
             title: worldBookAIGenerateForm.replaceExisting ? '已替换世界书条目' : '已追加世界书条目',
-            message: `本次应用 ${result.addedCount} 条，当前总计 ${result.totalCount} 条。`,
-            duration: 4500,
+            message: `本次应用 ${result.addedCount} 条，当前总计 ${result.totalCount} 条${openingTip}${greetingTip}。`,
+            duration: 5000,
         });
 
         closeWorldBookAIGenerateModal();
@@ -900,12 +911,14 @@ const openWorldBookAIPatchModal = () => {
         worldBookAIPatchForm.entryId = String(entries[0].id);
     }
 
+    worldBookAIPatchForm.confirmReviewedDiff = false;
     clearWorldBookAIPatchPreview();
     showWorldBookAIPatchModal.value = true;
 };
 
 const closeWorldBookAIPatchModal = () => {
     showWorldBookAIPatchModal.value = false;
+    worldBookAIPatchForm.confirmReviewedDiff = false;
     clearWorldBookAIPatchPreview();
 };
 
@@ -915,6 +928,7 @@ const handleGenerateWorldBookAIPatchPreview = async () => {
     }
 
     try {
+        worldBookAIPatchForm.confirmReviewedDiff = false;
         await generateWorldBookAIPatchPreview({
             editableData: editableData.value,
             patchForm: worldBookAIPatchForm,
@@ -930,6 +944,16 @@ const handleApplyWorldBookAIPatch = () => {
             type: 'warning',
             title: '还没有可应用的改写预览',
             message: '请先生成改写预览。',
+            duration: 3500,
+        });
+        return;
+    }
+
+    if (!worldBookAIPatchForm.confirmReviewedDiff) {
+        showOperationNotice({
+            type: 'warning',
+            title: '请先确认差异',
+            message: '勾选“我已核对差异并确认应用”后再应用改写。',
             duration: 3500,
         });
         return;

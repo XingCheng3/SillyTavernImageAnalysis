@@ -157,6 +157,46 @@ function testGenerationInputValidation() {
     assert.equal(valid.ok, true);
 }
 
+function testOpeningValidationRules() {
+    const draft = {
+        book: { name: '开场校验' },
+        entries: [
+            {
+                id: 'E01',
+                title: '主世界规则',
+                light: WORLD_BOOK_CONTEXT_LIGHTS.GREEN,
+                keywords: [],
+                insertionOrder: 10,
+                depth: 4,
+                position: 'before_char',
+                content: '这是合法正文。'.repeat(8),
+            },
+        ],
+        openings: [
+            {
+                id: 'OP1',
+                title: '开场A',
+                text: '第一幕。',
+                enableEntryIds: ['E01'],
+                disableEntryIds: ['E01'],
+            },
+            {
+                id: 'OP1',
+                title: '开场B',
+                text: '',
+                enableEntryIds: [],
+                disableEntryIds: [],
+            },
+        ],
+    };
+
+    const result = validateWorldBookGenerationDraft(draft, { requireContent: true });
+    assert.equal(result.ok, false);
+    assert.ok(result.errors.some(item => item.code === 'OPENING_ID_DUPLICATED'));
+    assert.ok(result.errors.some(item => item.code === 'OPENING_ENTRY_CONFLICT'));
+    assert.ok(result.warnings.some(item => item.code === 'OPENING_TEXT_EMPTY'));
+}
+
 function testPatchSchemaAndApply() {
     const patchValidation = validatePatchInstruction({
         entryId: 'E01',
@@ -216,6 +256,9 @@ function runAllTests() {
 
     testGenerationInputValidation();
     console.log('✓ 生成输入校验正确');
+
+    testOpeningValidationRules();
+    console.log('✓ 开场分支规则校验正确');
 
     testPatchSchemaAndApply();
     console.log('✓ 局部改写 patch 结构与本地应用正确');

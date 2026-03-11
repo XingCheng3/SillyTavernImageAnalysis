@@ -176,8 +176,28 @@ export function validateWorldBookGenerationDraft(draft, options = {}) {
         });
     }
 
+    const openingIds = new Set();
+
     normalized.openings.forEach((opening, index) => {
         const path = `openings[${index}]`;
+        const openingId = String(opening.id || '').trim();
+
+        if (!openingId) {
+            pushIssue(errors, {
+                path: `${path}.id`,
+                code: 'OPENING_ID_REQUIRED',
+                message: '开场白 id 不能为空。',
+            });
+        } else if (openingIds.has(openingId)) {
+            pushIssue(errors, {
+                path: `${path}.id`,
+                code: 'OPENING_ID_DUPLICATED',
+                message: `开场白 id ${openingId} 重复。`,
+            });
+        } else {
+            openingIds.add(openingId);
+        }
+
         if (!String(opening.title || '').trim()) {
             pushIssue(errors, {
                 path: `${path}.title`,
@@ -186,8 +206,37 @@ export function validateWorldBookGenerationDraft(draft, options = {}) {
             });
         }
 
-        [...(opening.enableEntryIds || []), ...(opening.disableEntryIds || [])].forEach((entryId) => {
-            if (!entryIds.has(String(entryId))) {
+        if (!String(opening.text || '').trim()) {
+            pushIssue(warnings, {
+                path: `${path}.text`,
+                code: 'OPENING_TEXT_EMPTY',
+                message: '开场白正文为空，应用联动时将被跳过。',
+            });
+        }
+
+        const enableIds = new Set((opening.enableEntryIds || []).map(v => String(v)));
+        const disableIds = new Set((opening.disableEntryIds || []).map(v => String(v)));
+
+        enableIds.forEach((entryId) => {
+            if (!entryIds.has(entryId)) {
+                pushIssue(warnings, {
+                    path,
+                    code: 'OPENING_ENTRY_REFERENCE_MISSING',
+                    message: `开场白引用了不存在的条目 id：${entryId}`,
+                });
+            }
+
+            if (disableIds.has(entryId)) {
+                pushIssue(errors, {
+                    path,
+                    code: 'OPENING_ENTRY_CONFLICT',
+                    message: `条目 id=${entryId} 同时出现在启用与禁用列表中。`,
+                });
+            }
+        });
+
+        disableIds.forEach((entryId) => {
+            if (!entryIds.has(entryId)) {
                 pushIssue(warnings, {
                     path,
                     code: 'OPENING_ENTRY_REFERENCE_MISSING',

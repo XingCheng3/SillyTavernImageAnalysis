@@ -141,11 +141,15 @@
             </div>
 
             <div class="modal-footer">
+                <label class="confirm-apply" v-if="preview">
+                    <input type="checkbox" v-model="form.confirmReviewedDiff" />
+                    <span>我已核对差异并确认应用改写结果</span>
+                </label>
                 <button class="action-button secondary" @click="$emit('close')">取消</button>
                 <button class="action-button" @click="$emit('generate')" :disabled="isGenerating || !form.instruction?.trim() || !form.entryId">
                     {{ isGenerating ? '生成中...' : '生成改写预览' }}
                 </button>
-                <button class="action-button" @click="$emit('apply')" :disabled="!preview || isGenerating">应用改写</button>
+                <button class="action-button" @click="$emit('apply')" :disabled="!preview || isGenerating || !form.confirmReviewedDiff">应用改写</button>
             </div>
         </div>
     </div>
@@ -423,6 +427,20 @@ const selectedEntryParagraphs = computed(() => {
     color: #78716c;
     border-top: 1px dashed #d6d3d1;
     background: #fff;
+}
+
+.confirm-apply {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    margin-right: auto;
+    font-size: 13px;
+    color: #44403c;
+}
+
+.confirm-apply input {
+    width: 15px;
+    height: 15px;
 }
 
 @media (max-width: 900px) {

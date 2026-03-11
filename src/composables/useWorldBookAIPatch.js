@@ -151,7 +151,6 @@ export function useWorldBookAIPatch({ apiSettings, openErrorModal, showOperation
                 lineDiff,
                 diffSummary: summarizeLineDiff(lineDiff),
                 changed: preview.changed,
-                nextEntry: preview.nextEntry,
             };
 
             if (!preview.changed) {
@@ -190,18 +189,20 @@ export function useWorldBookAIPatch({ apiSettings, openErrorModal, showOperation
         }
 
         const entries = Array.isArray(editableData?.book_entries) ? editableData.book_entries : [];
-        const targetIndex = Number.isFinite(preview.entryIndex) ? preview.entryIndex : -1;
-        if (targetIndex < 0 || targetIndex >= entries.length) {
+        const expectedId = String(preview.entryId || '');
+        const targetIndex = findWorldBookEntryIndex(entries, expectedId);
+        if (targetIndex < 0) {
             throw new Error('改写目标条目不存在或已变更，请重新生成预览。');
         }
 
         const current = entries[targetIndex];
-        const expectedId = String(preview.entryId || '');
-        if (expectedId && String(current?.id ?? '') !== expectedId) {
-            throw new Error('目标条目已变化，请重新生成改写预览。');
+        const currentTargetText = getPatchTargetText(current, preview.patch);
+        if (currentTargetText !== preview.beforeText) {
+            throw new Error('目标内容在预览后发生变化，请重新生成改写预览后再应用。');
         }
 
-        const nextEntry = { ...preview.nextEntry };
+        const refreshedPreview = buildPatchPreview(current, preview.patch);
+        const nextEntry = { ...refreshedPreview.nextEntry };
 
         if (preview.patch?.field === 'keysText') {
             const keys = normalizeKeywords(nextEntry.keysText);
@@ -216,7 +217,7 @@ export function useWorldBookAIPatch({ apiSettings, openErrorModal, showOperation
             entryId: String(nextEntry.id),
             entryTitle: nextEntry.name || nextEntry.comment || `条目 ${targetIndex + 1}`,
             field: preview.patch?.field || 'content',
-            changed: preview.changed,
+            changed: refreshedPreview.changed,
         };
     };
 

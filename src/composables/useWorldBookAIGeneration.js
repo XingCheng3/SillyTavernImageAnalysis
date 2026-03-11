@@ -80,6 +80,21 @@ function buildValidationSummary(result) {
     };
 }
 
+function normalizeOpeningBranches(openings = [], idMap = new Map()) {
+    return (Array.isArray(openings) ? openings : []).map((opening, index) => {
+        const enableEntryIds = (opening.enableEntryIds || []).map((id) => idMap.get(String(id)) || String(id));
+        const disableEntryIds = (opening.disableEntryIds || []).map((id) => idMap.get(String(id)) || String(id));
+
+        return {
+            id: String(opening.id || `OP${index + 1}`),
+            title: String(opening.title || `开场白 ${index + 1}`),
+            text: String(opening.text || '').trim(),
+            enableEntryIds,
+            disableEntryIds,
+        };
+    });
+}
+
 export function useWorldBookAIGeneration({ apiSettings, openErrorModal, showOperationNotice }) {
     const isGenerating = ref(false);
     const lastDraft = ref(null);
@@ -200,12 +215,39 @@ export function useWorldBookAIGeneration({ apiSettings, openErrorModal, showOper
             ? mappedEntries
             : [...currentEntries, ...mappedEntries];
 
+        const idMap = new Map();
+        validation.normalized.entries.forEach((entry, index) => {
+            idMap.set(String(entry.id), String(mappedEntries[index]?.id));
+        });
+
+        const openingBranches = normalizeOpeningBranches(validation.normalized.openings, idMap);
+
+        if (!editableData.character_book.extensions || typeof editableData.character_book.extensions !== 'object') {
+            editableData.character_book.extensions = {};
+        }
+
+        editableData.character_book.extensions.ai_opening_branches = openingBranches;
+        editableData.character_book.extensions.ai_opening_updated_at = new Date().toISOString();
+        editableData.character_book.extensions.ai_opening_schema = 'sillytavern.worldbook.ai.openings.v1';
+
+        const applyOpeningsToGreetings = options.applyOpeningsToGreetings !== false;
+        const openingTexts = openingBranches
+            .map(item => item.text)
+            .filter(Boolean);
+
+        if (applyOpeningsToGreetings && openingTexts.length > 0) {
+            editableData.first_message = openingTexts[0];
+            editableData.alternate_greetings = openingTexts.slice(1);
+        }
+
         const summary = buildValidationSummary(validation);
 
         return {
             replaced: replaceExisting,
             addedCount: mappedEntries.length,
             totalCount: editableData.book_entries.length,
+            openingCount: openingBranches.length,
+            greetingsSyncedCount: applyOpeningsToGreetings ? openingTexts.length : 0,
             warnings: validation.warnings,
             ...summary,
         };

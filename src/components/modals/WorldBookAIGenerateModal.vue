@@ -72,12 +72,20 @@
                         <input type="checkbox" v-model="form.replaceExisting" />
                         <span>应用时替换现有世界书条目（不勾选则追加）</span>
                     </label>
+
+                    <label class="replace-switch">
+                        <input type="checkbox" v-model="form.applyOpeningsToGreetings" />
+                        <span>将开场分支同步到开场白（first_message + alternate_greetings）</span>
+                    </label>
                 </div>
 
                 <div v-if="draft" class="section-card preview-card">
                     <div class="preview-head">
                         <h3>草稿预览</h3>
-                        <span class="count-chip">{{ draft.entries.length }} 条</span>
+                        <div class="preview-counts">
+                            <span class="count-chip">{{ draft.entries.length }} 条条目</span>
+                            <span class="count-chip" v-if="draft.openings?.length">{{ draft.openings.length }} 个开场分支</span>
+                        </div>
                     </div>
                     <p class="book-meta">
                         世界书：<strong>{{ draft.book?.name || '未命名' }}</strong>
@@ -105,6 +113,23 @@
                         </div>
                     </div>
                     <p v-if="draft.entries.length > 12" class="ellipsis-tip">仅预览前 12 条，应用后可在世界书页继续逐条微调。</p>
+
+                    <div class="opening-preview" v-if="draft.openings?.length">
+                        <h4>开场分支预览</h4>
+                        <div class="opening-list">
+                            <div v-for="opening in draft.openings" :key="opening.id" class="opening-item">
+                                <div class="opening-head">
+                                    <strong>{{ opening.title }}</strong>
+                                    <span class="opening-id">{{ opening.id }}</span>
+                                </div>
+                                <p>{{ opening.text || '（空）' }}</p>
+                                <div class="opening-links">
+                                    <span>启用：{{ opening.enableEntryIds?.join(', ') || '无' }}</span>
+                                    <span>禁用：{{ opening.disableEntryIds?.join(', ') || '无' }}</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
                 </div>
             </div>
 
@@ -214,7 +239,15 @@ defineEmits(['close', 'generate', 'apply']);
     display: flex;
     align-items: center;
     justify-content: space-between;
+    gap: 8px;
     margin-bottom: 8px;
+}
+
+.preview-counts {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
 }
 
 .count-chip {
@@ -317,10 +350,66 @@ defineEmits(['close', 'generate', 'apply']);
     color: #78716c;
 }
 
+.opening-preview {
+    margin-top: 14px;
+    border-top: 1px dashed #d6d3d1;
+    padding-top: 12px;
+}
+
+.opening-preview h4 {
+    margin: 0 0 8px;
+    font-size: 14px;
+    color: #44403c;
+}
+
+.opening-list {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+}
+
+.opening-item {
+    border: 1px solid #dfdbd3;
+    border-radius: 12px;
+    padding: 10px;
+    background: #fafaf9;
+}
+
+.opening-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 8px;
+}
+
+.opening-id {
+    font-size: 11px;
+    color: #78716c;
+    background: #f5f5f4;
+    border: 1px solid #d6d3d1;
+    border-radius: 999px;
+    padding: 2px 8px;
+}
+
+.opening-item p {
+    margin: 8px 0;
+    font-size: 13px;
+    color: #57534e;
+    line-height: 1.6;
+}
+
+.opening-links {
+    display: grid;
+    gap: 4px;
+    font-size: 12px;
+    color: #78716c;
+}
+
 @media (max-width: 900px) {
     .form-grid,
     .light-grid,
-    .preview-list {
+    .preview-list,
+    .opening-list {
         grid-template-columns: 1fr;
     }
 }
