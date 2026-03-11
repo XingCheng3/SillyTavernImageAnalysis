@@ -1,21 +1,10 @@
 <template>
     <div class="container">
         <div class="header-controls">
-            <h1>角色卡解析翻译器</h1>
-            <div class="header-buttons">
-                <button @click="showPromptModal = true" class="config-button prompt-button" title="编辑翻译提示词">
-                    <span class="button-icon">📝</span>
-                    <span class="button-text">翻译提示词</span>
-                </button>
-                <button @click="showJailbreakModal = true" class="config-button jailbreak-button" title="编辑破限文本">
-                    <span class="button-icon">🔓</span>
-                    <span class="button-text">破限文本</span>
-                </button>
-                <router-link to="/stream" class="config-button stream-button" title="流式传输测试">
-                    <span class="button-icon">🔄</span>
-                    <span class="button-text">流式测试</span>
-                </router-link>
-                <button @click="showSettingsModal = true" class="settings-button">设置</button>
+            <div class="header-copy">
+                <p class="page-kicker">Character Card Workspace</p>
+                <h1>角色卡解析翻译器</h1>
+                <p class="page-subtitle">面向长文本角色卡与世界书的编辑、翻译、快照和导出工作台。</p>
             </div>
         </div>
 
@@ -28,11 +17,31 @@
         />
 
         <div class="upload-area">
-            <label for="file-upload" class="upload-button">
-                选择角色卡（PNG / JSON）
-            </label>
-            <input id="file-upload" type="file" accept="image/png,application/json,.json" @change="handleFileUpload" class="hidden" />
-            <p v-if="fileName" class="file-name">已选择: {{ fileName }}</p>
+            <div class="workspace-toolbar">
+                <div class="upload-stack">
+                    <label for="file-upload" class="upload-button">选择角色卡（PNG / JSON）</label>
+                    <input id="file-upload" type="file" accept="image/png,application/json,.json" @change="handleFileUpload" class="hidden" />
+                    <p v-if="fileName" class="file-name">已选择：{{ fileName }}</p>
+                    <p v-else class="file-hint">支持 PNG 角色卡 与 JSON 角色卡，选完后可直接在右侧继续编辑、快照和导出。</p>
+                </div>
+
+                <div class="workspace-actions">
+                    <div class="toolbar-cluster utility-tools">
+                        <button type="button" @click="showPromptModal = true" class="tool-button">翻译提示词</button>
+                        <button type="button" @click="showJailbreakModal = true" class="tool-button">破限提示词</button>
+                        <button type="button" @click="showSettingsModal = true" class="tool-button">设置</button>
+                        <router-link to="/stream" class="tool-button">流式测试</router-link>
+                    </div>
+
+                    <div v-if="characterData" class="toolbar-cluster file-tools">
+                        <button type="button" @click="saveManualSnapshot" class="snapshot-button">保存快照</button>
+                        <button type="button" @click="undoLastSnapshot" class="snapshot-button secondary" :disabled="!canUndoSnapshot">撤销</button>
+                        <button type="button" @click="restoreInitialSnapshot" class="snapshot-button secondary" :disabled="!canRestoreInitialSnapshot">恢复初始</button>
+                        <span v-if="snapshotMeta.currentLabel" class="snapshot-chip">当前快照：{{ snapshotMeta.currentLabel }}</span>
+                        <button type="button" @click="exportCharacterCard" class="export-button">导出角色卡</button>
+                    </div>
+                </div>
+            </div>
         </div>
 
         <div v-if="isLoading" class="loading">
@@ -125,16 +134,6 @@
                 </div>
             </div>
 
-            <!-- 导出按钮区域 -->
-            <div class="export-section">
-                <div class="snapshot-actions">
-                    <button @click="saveManualSnapshot" class="snapshot-button">保存快照</button>
-                    <button @click="undoLastSnapshot" class="snapshot-button secondary" :disabled="!canUndoSnapshot">撤销</button>
-                    <button @click="restoreInitialSnapshot" class="snapshot-button secondary" :disabled="!canRestoreInitialSnapshot">恢复初始</button>
-                </div>
-                <div v-if="snapshotMeta.currentLabel" class="snapshot-tip">当前快照：{{ snapshotMeta.currentLabel }}</div>
-                <button @click="exportCharacterCard" class="export-button">导出角色卡</button>
-            </div>
         </div>
         
         <SettingsModal :show="showSettingsModal" @close="showSettingsModal = false" @save="handleSaveSettings" />
@@ -1073,35 +1072,3 @@ const startBookBatchTranslation = async () => {
 </script>
 
 
-<style scoped>
-.snapshot-actions {
-    display: flex;
-    gap: 8px;
-    margin-bottom: 8px;
-    flex-wrap: wrap;
-}
-
-.snapshot-button {
-    padding: 8px 12px;
-    border: none;
-    border-radius: 8px;
-    background: #2563eb;
-    color: #fff;
-    cursor: pointer;
-}
-
-.snapshot-button.secondary {
-    background: #475569;
-}
-
-.snapshot-button:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-}
-
-.snapshot-tip {
-    margin-bottom: 10px;
-    color: #64748b;
-    font-size: 13px;
-}
-</style>

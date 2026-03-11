@@ -86,8 +86,8 @@ defineProps({
     gap: 16px;
     padding: 18px;
     border-radius: 16px;
-    background: linear-gradient(135deg, #eff6ff 0%, #f8fafc 100%);
-    border: 1px solid #dbeafe;
+    background: linear-gradient(180deg, #ffffff 0%, #f7f6f3 100%);
+    border: 1px solid #dfdbd3;
 }
 
 .eyebrow {
@@ -96,7 +96,7 @@ defineProps({
     font-weight: 700;
     letter-spacing: 0.08em;
     text-transform: uppercase;
-    color: #2563eb;
+    color: #a16207;
 }
 
 .tab-intro-card h3 {

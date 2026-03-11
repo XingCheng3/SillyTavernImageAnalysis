@@ -72,8 +72,8 @@
                 </div>
             </div>
 
-            <div v-if="editableData.book_entries && editableData.book_entries.length > 0" class="entries-list">
-                <div v-for="(entry, index) in editableData.book_entries" :key="index" class="book-entry">
+            <div v-if="editableData.book_entries && editableData.book_entries.length > 0" class="entries-list worldbook-entries-list">
+                <div v-for="(entry, index) in editableData.book_entries" :key="index" class="book-entry worldbook-entry-card">
                     <div class="entry-header">
                         <div class="entry-title-block">
                             <span class="entry-index">条目 {{ index + 1 }}</span>
@@ -252,8 +252,8 @@ defineEmits(['open-batch-translate', 'add-entry', 'remove-entry', 'create-book',
     gap: 16px;
     padding: 18px;
     border-radius: 16px;
-    background: linear-gradient(135deg, #eef2ff 0%, #f8fafc 100%);
-    border: 1px solid #c7d2fe;
+    background: linear-gradient(180deg, #ffffff 0%, #f7f6f3 100%);
+    border: 1px solid #dfdbd3;
     margin-bottom: 16px;
 }
 
@@ -263,7 +263,7 @@ defineEmits(['open-batch-translate', 'add-entry', 'remove-entry', 'create-book',
     font-weight: 700;
     letter-spacing: 0.08em;
     text-transform: uppercase;
-    color: #4f46e5;
+    color: #a16207;
 }
 
 .tab-intro-card h3 {
@@ -371,6 +371,7 @@ defineEmits(['open-batch-translate', 'add-entry', 'remove-entry', 'create-book',
     justify-content: space-between;
     align-items: flex-end;
     gap: 16px;
+    padding: 0 2px;
 }
 
 .entry-count {
@@ -388,11 +389,23 @@ defineEmits(['open-batch-translate', 'add-entry', 'remove-entry', 'create-book',
     gap: 16px;
 }
 
+.worldbook-entries-list {
+    gap: 18px;
+}
+
+.worldbook-entry-card {
+    padding: 20px;
+    border-radius: 20px;
+    border: 1px solid #d6d3d1;
+    background: linear-gradient(180deg, #ffffff 0%, #fafaf9 100%);
+}
+
 .entry-header {
     display: flex;
     justify-content: space-between;
     gap: 16px;
     margin-bottom: 14px;
+    align-items: flex-start;
 }
 
 .entry-title-block {
@@ -418,10 +431,10 @@ defineEmits(['open-batch-translate', 'add-entry', 'remove-entry', 'create-book',
 }
 
 .card-block {
-    padding: 14px;
-    border-radius: 14px;
-    background: #f8fafc;
-    border: 1px solid #e2e8f0;
+    padding: 16px;
+    border-radius: 16px;
+    background: #f7f6f3;
+    border: 1px solid #dfdbd3;
     margin-top: 12px;
 }
 
@@ -446,11 +459,12 @@ defineEmits(['open-batch-translate', 'add-entry', 'remove-entry', 'create-book',
 }
 
 .keyword-tag {
-    padding: 4px 8px;
+    padding: 5px 10px;
     border-radius: 999px;
     font-size: 12px;
-    background: #e0e7ff;
-    color: #3730a3;
+    background: #f5f5f4;
+    color: #44403c;
+    border: 1px solid #d6d3d1;
 }
 
 .option-grid,
@@ -524,6 +538,10 @@ defineEmits(['open-batch-translate', 'add-entry', 'remove-entry', 'create-book',
     .large-empty {
         flex-direction: column;
         align-items: stretch;
+    }
+
+    .worldbook-entry-card {
+        padding: 16px;
     }
 
     .summary-grid,

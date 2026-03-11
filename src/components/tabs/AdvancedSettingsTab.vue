@@ -91,12 +91,12 @@ defineProps({
     gap: 16px;
     padding: 18px;
     border-radius: 16px;
-    border: 1px solid #fde68a;
-    background: linear-gradient(135deg, #fffbeb 0%, #fff7ed 100%);
+    border: 1px solid #dfdbd3;
+    background: linear-gradient(180deg, #ffffff 0%, #f7f6f3 100%);
 }
 
 .warning-tone {
-    border-color: #fcd34d;
+    border-color: #d6d3d1;
 }
 
 .eyebrow {
@@ -105,7 +105,7 @@ defineProps({
     font-weight: 700;
     letter-spacing: 0.08em;
     text-transform: uppercase;
-    color: #d97706;
+    color: #a16207;
 }
 
 .tab-intro-card h3 {
