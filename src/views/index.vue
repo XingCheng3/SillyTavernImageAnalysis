@@ -144,6 +144,7 @@
         <CharacterAICreateModal
             :show="showCharacterAICreateModal"
             :isGenerating="isCharacterAICreating"
+            :generationStageLabel="characterAICreationStageLabel"
             :form="characterAICreateForm"
             :draft="characterAICreateDraft"
             :warnings="characterAICreateWarnings"
@@ -300,7 +301,7 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed, onMounted, watch } from 'vue';
+import { ref, reactive, computed, onMounted, onUnmounted, watch } from 'vue';
 import BasicInfoTab from '@/components/tabs/BasicInfoTab.vue';
 import AdvancedSettingsTab from '@/components/tabs/AdvancedSettingsTab.vue';
 import WorldBookTab from '@/components/tabs/WorldBookTab.vue';
@@ -397,6 +398,7 @@ const characterAICreateForm = reactive({
     genre: '',
     style: '',
     relationshipTone: '',
+    generationMode: 'two_step',
     targetEntryCount: 16,
     openingCount: 3,
     notes: '',
@@ -601,6 +603,7 @@ const {
 
 const {
     isGenerating: isCharacterAICreating,
+    generationStageLabel: characterAICreationStageLabel,
     draft: characterAICreateDraft,
     draftWarnings: characterAICreateWarnings,
     generateDraft: generateCharacterAIDraft,
@@ -1206,6 +1209,10 @@ const handleApplyWorldBookAIPatch = () => {
 };
 
 // 使用拆分后的通用辅助函数
+
+onUnmounted(() => {
+    clearImagePreviewObjectUrl();
+});
 
 // 初始化配置
 onMounted(() => {

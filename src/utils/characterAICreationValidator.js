@@ -16,6 +16,11 @@ function normalizeGreetings(raw) {
     return raw.map(item => normalizeString(item)).filter(Boolean);
 }
 
+export const CHARACTER_CREATE_GENERATION_MODES = Object.freeze({
+    SINGLE: 'single',
+    TWO_STEP: 'two_step',
+});
+
 export function validateCharacterCreateInput(input = {}) {
     const errors = [];
     const warnings = [];
@@ -26,6 +31,15 @@ export function validateCharacterCreateInput(input = {}) {
             path: 'corePrompt',
             code: 'CORE_PROMPT_REQUIRED',
             message: '从 0 创建角色卡时必须提供核心提示词。',
+        });
+    }
+
+    const generationMode = normalizeString(input.generationMode) || CHARACTER_CREATE_GENERATION_MODES.TWO_STEP;
+    if (!Object.values(CHARACTER_CREATE_GENERATION_MODES).includes(generationMode)) {
+        errors.push({
+            path: 'generationMode',
+            code: 'GENERATION_MODE_INVALID',
+            message: `generationMode 仅支持 ${Object.values(CHARACTER_CREATE_GENERATION_MODES).join(' / ')}。`,
         });
     }
 
@@ -45,6 +59,7 @@ export function validateCharacterCreateInput(input = {}) {
         normalized: {
             ...input,
             corePrompt,
+            generationMode,
             targetEntryCount: worldbookInputResult.normalized.targetEntryCount,
             openingCount: worldbookInputResult.normalized.openingCount,
         },
@@ -78,9 +93,11 @@ export function normalizeCharacterDraft(raw = {}) {
     };
 }
 
-export function validateCharacterDraft(raw = {}) {
+export function validateCharacterDraft(raw = {}, options = {}) {
     const errors = [];
     const warnings = [];
+
+    const requireWorldbookContent = options.requireWorldbookContent !== false;
 
     const normalized = normalizeCharacterDraft(raw);
 
@@ -116,7 +133,9 @@ export function validateCharacterDraft(raw = {}) {
         });
     }
 
-    const worldbookResult = validateWorldBookGenerationDraft(normalized.worldbookDraft, { requireContent: true });
+    const worldbookResult = validateWorldBookGenerationDraft(normalized.worldbookDraft, {
+        requireContent: requireWorldbookContent,
+    });
     if (!worldbookResult.ok) {
         errors.push(...worldbookResult.errors.map(item => ({
             ...item,

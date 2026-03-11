@@ -1,10 +1,13 @@
 import { ref } from 'vue';
 import { CharacterCardUtils } from '@/utils/characterCardParser';
 import {
+    buildCharacterAICreateExpandUserPrompt,
+    buildCharacterAICreateStructureUserPrompt,
     buildCharacterAICreateSystemPrompt,
     buildCharacterAICreateUserPrompt,
 } from '@/utils/characterAICreationPrompt';
 import {
+    CHARACTER_CREATE_GENERATION_MODES,
     validateCharacterCreateInput,
     validateCharacterDraft,
 } from '@/utils/characterAICreationValidator';
@@ -64,8 +67,36 @@ function applyCardFieldsToTemplate(template, card = {}) {
     return template;
 }
 
+async function requestDraftFromModel({ apiSettings, userPrompt, temperature = 0.8 }) {
+    const response = await fetch(`${apiSettings.url}/chat/completions`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${apiSettings.key}`,
+        },
+        body: JSON.stringify({
+            model: apiSettings.model,
+            temperature,
+            messages: [
+                { role: 'system', content: buildCharacterAICreateSystemPrompt() },
+                { role: 'user', content: userPrompt },
+            ],
+        }),
+    });
+
+    if (!response.ok) {
+        const text = await response.text();
+        throw new Error(`创建请求失败（HTTP ${response.status}）：${text || response.statusText}`);
+    }
+
+    const data = await response.json();
+    const content = data?.choices?.[0]?.message?.content || '';
+    return parseDraftResponse(content);
+}
+
 export function useCharacterAICreation({ apiSettings, openErrorModal, showOperationNotice }) {
     const isGenerating = ref(false);
+    const generationStageLabel = ref('');
     const draft = ref(null);
     const draftWarnings = ref([]);
 
@@ -80,33 +111,49 @@ export function useCharacterAICreation({ apiSettings, openErrorModal, showOperat
         }
 
         isGenerating.value = true;
+        generationStageLabel.value = '准备中';
 
         try {
-            const response = await fetch(`${apiSettings.value.url}/chat/completions`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${apiSettings.value.key}`,
-                },
-                body: JSON.stringify({
-                    model: apiSettings.value.model,
+            let validation;
+
+            if (inputValidation.normalized.generationMode === CHARACTER_CREATE_GENERATION_MODES.TWO_STEP) {
+                generationStageLabel.value = '阶段1：生成结构骨架';
+                const structureRawDraft = await requestDraftFromModel({
+                    apiSettings: apiSettings.value,
+                    userPrompt: buildCharacterAICreateStructureUserPrompt(inputValidation.normalized),
+                    temperature: 0.75,
+                });
+
+                const structureValidation = validateCharacterDraft(structureRawDraft, {
+                    requireWorldbookContent: false,
+                });
+
+                if (!structureValidation.ok) {
+                    throw new Error(structureValidation.errors.map(item => `${item.path}: ${item.message}`).join('\n'));
+                }
+
+                generationStageLabel.value = '阶段2：扩写细化内容';
+                const expandedRawDraft = await requestDraftFromModel({
+                    apiSettings: apiSettings.value,
+                    userPrompt: buildCharacterAICreateExpandUserPrompt(inputValidation.normalized, structureValidation.normalized),
                     temperature: 0.8,
-                    messages: [
-                        { role: 'system', content: buildCharacterAICreateSystemPrompt() },
-                        { role: 'user', content: buildCharacterAICreateUserPrompt(inputValidation.normalized) },
-                    ],
-                }),
-            });
+                });
 
-            if (!response.ok) {
-                const text = await response.text();
-                throw new Error(`创建请求失败（HTTP ${response.status}）：${text || response.statusText}`);
+                validation = validateCharacterDraft(expandedRawDraft, {
+                    requireWorldbookContent: true,
+                });
+            } else {
+                generationStageLabel.value = '单阶段生成';
+                const rawDraft = await requestDraftFromModel({
+                    apiSettings: apiSettings.value,
+                    userPrompt: buildCharacterAICreateUserPrompt(inputValidation.normalized),
+                    temperature: 0.8,
+                });
+
+                validation = validateCharacterDraft(rawDraft, {
+                    requireWorldbookContent: true,
+                });
             }
-
-            const data = await response.json();
-            const content = data?.choices?.[0]?.message?.content || '';
-            const rawDraft = parseDraftResponse(content);
-            const validation = validateCharacterDraft(rawDraft);
 
             if (!validation.ok) {
                 throw new Error(validation.errors.map(item => `${item.path}: ${item.message}`).join('\n'));
@@ -136,6 +183,7 @@ export function useCharacterAICreation({ apiSettings, openErrorModal, showOperat
             throw error;
         } finally {
             isGenerating.value = false;
+            generationStageLabel.value = '';
         }
     };
 
@@ -158,10 +206,12 @@ export function useCharacterAICreation({ apiSettings, openErrorModal, showOperat
     const clearDraft = () => {
         draft.value = null;
         draftWarnings.value = [];
+        generationStageLabel.value = '';
     };
 
     return {
         isGenerating,
+        generationStageLabel,
         draft,
         draftWarnings,
         generateDraft,

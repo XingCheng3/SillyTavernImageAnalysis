@@ -11,18 +11,31 @@ function testInputValidation() {
         corePrompt: '',
         targetEntryCount: 16,
         openingCount: 2,
+        generationMode: 'single',
     });
 
     assert.equal(invalid.ok, false);
     assert.ok(invalid.errors.some(item => item.code === 'CORE_PROMPT_REQUIRED'));
 
+    const badMode = validateCharacterCreateInput({
+        corePrompt: 'abc',
+        targetEntryCount: 12,
+        openingCount: 3,
+        generationMode: 'fastest',
+    });
+
+    assert.equal(badMode.ok, false);
+    assert.ok(badMode.errors.some(item => item.code === 'GENERATION_MODE_INVALID'));
+
     const valid = validateCharacterCreateInput({
         corePrompt: '创建一个异世界学院战斗女主角色卡',
         targetEntryCount: 12,
         openingCount: 3,
+        generationMode: 'two_step',
     });
 
     assert.equal(valid.ok, true);
+    assert.equal(valid.normalized.generationMode, 'two_step');
 }
 
 function buildValidDraft() {
@@ -113,6 +126,19 @@ function testDraftNormalizationAndValidation() {
     assert.equal(result.normalized.worldbookDraft.book.name, '裂界学院世界书');
 }
 
+function testTwoStepStructureValidationMode() {
+    const structureDraft = buildValidDraft();
+    structureDraft.worldbook.entries.forEach((entry) => {
+        entry.ct = '';
+    });
+
+    const strict = validateCharacterDraft(structureDraft, { requireWorldbookContent: true });
+    assert.equal(strict.ok, false);
+
+    const relaxed = validateCharacterDraft(structureDraft, { requireWorldbookContent: false });
+    assert.equal(relaxed.ok, true);
+}
+
 function runAllTests() {
     console.log('🚀 开始运行角色卡 AI 从0创建测试\n');
 
@@ -121,6 +147,9 @@ function runAllTests() {
 
     testDraftNormalizationAndValidation();
     console.log('✓ 草稿标准化与结构校验正确');
+
+    testTwoStepStructureValidationMode();
+    console.log('✓ 两阶段结构草稿校验模式正确');
 
     console.log('\n✅ 角色卡 AI 从0创建测试通过');
 }

@@ -45,6 +45,14 @@
                         </label>
 
                         <label class="field">
+                            <span>生成策略</span>
+                            <select v-model="form.generationMode" class="editable-input">
+                                <option value="two_step">两阶段（先骨架再扩写，推荐）</option>
+                                <option value="single">单阶段（更快）</option>
+                            </select>
+                        </label>
+
+                        <label class="field">
                             <span>世界书条目数</span>
                             <input v-model.number="form.targetEntryCount" type="number" min="1" max="80" class="editable-input" />
                         </label>
@@ -91,6 +99,7 @@
             </div>
 
             <div class="modal-footer">
+                <p class="stage-tip" v-if="isGenerating && generationStageLabel">{{ generationStageLabel }}</p>
                 <button class="action-button secondary" @click="$emit('close')">取消</button>
                 <button class="action-button" @click="$emit('generate')" :disabled="isGenerating || !form.corePrompt?.trim()">
                     {{ isGenerating ? '生成中...' : '生成角色草稿' }}
@@ -105,6 +114,7 @@
 defineProps({
     show: { type: Boolean, required: true },
     isGenerating: { type: Boolean, default: false },
+    generationStageLabel: { type: String, default: '' },
     form: { type: Object, required: true },
     draft: { type: Object, default: null },
     warnings: { type: Array, default: () => [] },
@@ -228,6 +238,16 @@ defineEmits(['close', 'generate', 'apply']);
     color: #78350f;
     font-size: 12px;
     line-height: 1.6;
+}
+
+.stage-tip {
+    margin: 0 auto 0 0;
+    font-size: 12px;
+    color: #57534e;
+    background: #f5f5f4;
+    border: 1px solid #d6d3d1;
+    border-radius: 999px;
+    padding: 6px 10px;
 }
 
 @media (max-width: 900px) {

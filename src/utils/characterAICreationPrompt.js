@@ -22,9 +22,8 @@ export function buildCharacterAICreateSystemPrompt() {
     return SYSTEM_PROMPT;
 }
 
-export function buildCharacterAICreateUserPrompt(input = {}) {
-    const payload = {
-        task: '从 0 生成角色卡草稿（含世界书）',
+function buildBasePayload(input = {}) {
+    return {
         language: input.language || 'zh-CN',
         corePrompt: input.corePrompt || '',
         genre: input.genre || '',
@@ -49,6 +48,47 @@ export function buildCharacterAICreateUserPrompt(input = {}) {
             },
             worldbook: getCompactSchemaExample(),
         },
+    };
+}
+
+export function buildCharacterAICreateStructureUserPrompt(input = {}) {
+    const payload = {
+        task: '从 0 生成角色卡结构草稿（阶段1：骨架）',
+        stage: 'structure',
+        ...buildBasePayload(input),
+        stageRules: [
+            '重点先保证角色卡与世界书结构正确',
+            '允许 worldbook.entries[*].ct 暂时较短或留空',
+            '必须提供每个条目的摘要 sm 和关键词 k（蓝灯必填）',
+            '开场分支可先给简版文案',
+        ],
+    };
+
+    return JSON.stringify(payload, null, 2);
+}
+
+export function buildCharacterAICreateExpandUserPrompt(input = {}, structureDraft = {}) {
+    const payload = {
+        task: '从结构草稿扩写为可直接应用的完整角色卡（阶段2：细化）',
+        stage: 'expand',
+        ...buildBasePayload(input),
+        structureDraft,
+        stageRules: [
+            '保持条目 id 不变并沿用已给结构',
+            '补全 worldbook.entries[*].ct，要求有实际剧情价值',
+            '完善 card.first_message 与 alternate_greetings',
+            '不要删除既有条目，除非明确冲突且给出替代内容',
+        ],
+    };
+
+    return JSON.stringify(payload, null, 2);
+}
+
+export function buildCharacterAICreateUserPrompt(input = {}) {
+    const payload = {
+        task: '从 0 生成角色卡草稿（含世界书）',
+        stage: 'single',
+        ...buildBasePayload(input),
     };
 
     return JSON.stringify(payload, null, 2);
