@@ -21,6 +21,7 @@ import {
     getPatchTargetText,
     validatePatchInstruction,
 } from '../src/utils/worldBookAIPatchSchema.js';
+import { buildLineDiff, summarizeLineDiff } from '../src/utils/textDiffPreview.js';
 
 function testLightInferenceAndApply() {
     assert.equal(inferContextLight({ constant: true, selective: false }), WORLD_BOOK_CONTEXT_LIGHTS.GREEN);
@@ -192,6 +193,15 @@ function testPatchHelpers() {
     assert.equal(target, '第二段。');
 }
 
+function testLineDiffPreview() {
+    const diff = buildLineDiff('第一行\n第二行\n第三行', '第一行\n第二行(改)\n第三行\n第四行');
+    const summary = summarizeLineDiff(diff);
+
+    assert.ok(summary.add >= 1, '应识别新增行');
+    assert.ok(summary.remove >= 1, '应识别删除行');
+    assert.ok(summary.context >= 1, '应识别相同行');
+}
+
 function runAllTests() {
     console.log('🚀 开始运行世界书 AI 代写基础能力测试\n');
 
@@ -213,7 +223,10 @@ function runAllTests() {
     testPatchHelpers();
     console.log('✓ 局部改写辅助能力正确');
 
-    console.log('\n✅ 世界书 AI 代写 M0/M1/M2/M3 基础测试通过');
+    testLineDiffPreview();
+    console.log('✓ 行级差异预览能力正确');
+
+    console.log('\n✅ 世界书 AI 代写 M0/M1/M2/M3/M4 基础测试通过');
 }
 
 runAllTests();

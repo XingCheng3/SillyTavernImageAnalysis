@@ -12,6 +12,7 @@ import {
     buildWorldBookPatchSystemPrompt,
     buildWorldBookPatchUserPrompt,
 } from '@/utils/worldBookAIPatchPrompt';
+import { buildLineDiff, summarizeLineDiff } from '@/utils/textDiffPreview';
 
 function extractJsonText(raw = '') {
     const text = String(raw || '').trim();
@@ -138,6 +139,7 @@ export function useWorldBookAIPatch({ apiSettings, openErrorModal, showOperation
             });
 
             const preview = buildPatchPreview(targetEntry, mergedPatch);
+            const lineDiff = buildLineDiff(preview.beforeText, preview.afterText);
 
             patchPreview.value = {
                 entryId: String(targetEntry.id),
@@ -146,6 +148,8 @@ export function useWorldBookAIPatch({ apiSettings, openErrorModal, showOperation
                 patch: mergedPatch,
                 beforeText: preview.beforeText,
                 afterText: preview.afterText,
+                lineDiff,
+                diffSummary: summarizeLineDiff(lineDiff),
                 changed: preview.changed,
                 nextEntry: preview.nextEntry,
             };

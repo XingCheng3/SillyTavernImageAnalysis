@@ -52,6 +52,24 @@
                             <input v-model.number="form.paragraphIndex" type="number" min="0" class="editable-input" />
                         </label>
 
+                        <div class="field full paragraph-picker" v-if="form.scope === 'paragraph'">
+                            <span>段落候选（点击快速选择）</span>
+                            <div class="paragraph-list" v-if="selectedEntryParagraphs.length">
+                                <button
+                                    v-for="(paragraph, idx) in selectedEntryParagraphs"
+                                    :key="idx"
+                                    type="button"
+                                    class="paragraph-chip"
+                                    :class="{ active: Number(form.paragraphIndex) === idx }"
+                                    @click="form.paragraphIndex = idx"
+                                >
+                                    <strong>#{{ idx }}</strong>
+                                    <span>{{ paragraph.slice(0, 56) }}{{ paragraph.length > 56 ? '…' : '' }}</span>
+                                </button>
+                            </div>
+                            <p v-else class="paragraph-empty">当前条目没有可识别段落，请先补充内容再改写。</p>
+                        </div>
+
                         <label class="field" v-if="form.scope === 'field'">
                             <span>字段</span>
                             <select v-model="form.field" class="editable-input">
@@ -98,6 +116,27 @@
                             <textarea class="diff-text" readonly :value="preview.afterText"></textarea>
                         </div>
                     </div>
+
+                    <div class="diff-summary" v-if="preview.diffSummary">
+                        <span class="chip add">+{{ preview.diffSummary.add }} 新增行</span>
+                        <span class="chip remove">-{{ preview.diffSummary.remove }} 删除行</span>
+                        <span class="chip context">={{ preview.diffSummary.context }} 相同行</span>
+                    </div>
+
+                    <div class="line-diff" v-if="preview.lineDiff?.lines?.length">
+                        <div
+                            v-for="(line, idx) in preview.lineDiff.lines"
+                            :key="`${line.type}-${idx}`"
+                            class="line-item"
+                            :class="line.type"
+                        >
+                            <span class="marker">{{ line.type === 'add' ? '+' : line.type === 'remove' ? '-' : '·' }}</span>
+                            <span class="text">{{ line.text || ' ' }}</span>
+                        </div>
+                        <p v-if="preview.lineDiff.truncated" class="diff-truncated-tip">
+                            仅展示前 {{ preview.lineDiff.lines.length }} 行差异（总计 {{ preview.lineDiff.total }} 行）。
+                        </p>
+                    </div>
                 </div>
             </div>
 
@@ -113,7 +152,9 @@
 </template>
 
 <script setup>
-defineProps({
+import { computed } from 'vue';
+
+const props = defineProps({
     show: { type: Boolean, required: true },
     isGenerating: { type: Boolean, default: false },
     form: { type: Object, required: true },
@@ -122,6 +163,19 @@ defineProps({
 });
 
 defineEmits(['close', 'generate', 'apply']);
+
+const selectedEntryParagraphs = computed(() => {
+    const target = String(props.form?.entryId || '');
+    if (!target) return [];
+
+    const entry = (props.entries || []).find(item => String(item?.id) === target);
+    if (!entry) return [];
+
+    return String(entry.content || '')
+        .split(/\n{2,}/)
+        .map(v => v.trim())
+        .filter(Boolean);
+});
 </script>
 
 <style scoped>
@@ -169,6 +223,46 @@ defineEmits(['close', 'generate', 'apply']);
 
 .field.full {
     grid-column: 1 / -1;
+}
+
+.paragraph-list {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+}
+
+.paragraph-chip {
+    border: 1px solid #dfdbd3;
+    border-radius: 10px;
+    padding: 8px 10px;
+    background: #fafaf9;
+    text-align: left;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    color: #44403c;
+    cursor: pointer;
+}
+
+.paragraph-chip strong {
+    font-size: 12px;
+}
+
+.paragraph-chip span {
+    font-size: 12px;
+    color: #78716c;
+    line-height: 1.4;
+}
+
+.paragraph-chip.active {
+    border-color: #93c5fd;
+    background: #eff6ff;
+}
+
+.paragraph-empty {
+    margin: 0;
+    font-size: 12px;
+    color: #a8a29e;
 }
 
 .replace-switch {
@@ -232,9 +326,109 @@ defineEmits(['close', 'generate', 'apply']);
     resize: vertical;
 }
 
+.diff-summary {
+    margin-top: 10px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.chip {
+    display: inline-flex;
+    align-items: center;
+    height: 26px;
+    border-radius: 999px;
+    padding: 0 10px;
+    border: 1px solid #d6d3d1;
+    font-size: 12px;
+    font-weight: 700;
+}
+
+.chip.add {
+    color: #166534;
+    background: #dcfce7;
+    border-color: #86efac;
+}
+
+.chip.remove {
+    color: #991b1b;
+    background: #fee2e2;
+    border-color: #fca5a5;
+}
+
+.chip.context {
+    color: #57534e;
+    background: #f5f5f4;
+    border-color: #d6d3d1;
+}
+
+.line-diff {
+    margin-top: 10px;
+    border: 1px solid #dfdbd3;
+    border-radius: 12px;
+    max-height: 260px;
+    overflow: auto;
+    background: #fafaf9;
+}
+
+.line-item {
+    display: grid;
+    grid-template-columns: 20px minmax(0, 1fr);
+    gap: 8px;
+    padding: 6px 10px;
+    font-size: 12px;
+    line-height: 1.5;
+    border-bottom: 1px dashed #e7e5e4;
+}
+
+.line-item:last-child {
+    border-bottom: none;
+}
+
+.line-item .marker {
+    font-weight: 700;
+    color: #a8a29e;
+}
+
+.line-item.add {
+    background: #f0fdf4;
+}
+
+.line-item.add .marker {
+    color: #16a34a;
+}
+
+.line-item.remove {
+    background: #fef2f2;
+}
+
+.line-item.remove .marker {
+    color: #dc2626;
+}
+
+.line-item.context {
+    background: #fafaf9;
+}
+
+.line-item .text {
+    white-space: pre-wrap;
+    word-break: break-word;
+    color: #292524;
+}
+
+.diff-truncated-tip {
+    margin: 0;
+    padding: 8px 10px;
+    font-size: 12px;
+    color: #78716c;
+    border-top: 1px dashed #d6d3d1;
+    background: #fff;
+}
+
 @media (max-width: 900px) {
     .form-grid,
-    .diff-grid {
+    .diff-grid,
+    .paragraph-list {
         grid-template-columns: 1fr;
     }
 }
