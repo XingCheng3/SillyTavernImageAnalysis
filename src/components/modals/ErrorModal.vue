@@ -29,7 +29,7 @@
 </template>
 
 <script setup>
-const props = defineProps({
+defineProps({
     show: { type: Boolean, required: true },
     errorModal: { type: Object, required: true },
 });

@@ -225,7 +225,9 @@ export function useBasicTranslation({
                         errorMessage = errorObj.message || err.message;
                     }
                 }
-            } catch (_parseErr) {}
+            } catch {
+                // 非 JSON 错误，保持原始错误信息
+            }
 
             if (!errorDetails && err && typeof err === 'object') {
                 try {
@@ -233,7 +235,9 @@ export function useBasicTranslation({
                     if (parsed && (parsed.status || parsed.statusText)) {
                         errorDetails = { ...parsed, ...(parsed.error || {}) };
                     }
-                } catch (_) {}
+                } catch {
+                    // 非 JSON 错误，保持原始错误信息
+                }
             }
 
             const friendlyMessage = getFriendlyErrorMessage(errorDetails || { message: errorMessage });

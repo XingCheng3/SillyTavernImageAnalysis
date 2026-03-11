@@ -204,14 +204,6 @@ const deselectAll = () => {
     });
 };
 
-const selectRecommended = () => {
-    compareItems.value.forEach(item => {
-        // 智能推荐：选择有实际变化的翻译
-        const hasChange = getChangeType(item.original, item.translated) !== 'no-change';
-        item.selected = hasChange && !item.failed;
-    });
-};
-
 const previewChanges = () => {
     const selectedItems = compareItems.value.filter(item => item.selected);
     emit('preview', selectedItems);

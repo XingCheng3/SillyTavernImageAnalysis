@@ -43,7 +43,7 @@
 </template>
 
 <script setup>
-const props = defineProps({
+defineProps({
     show: { type: Boolean, required: true },
     replaceForm: { type: Object, required: true },
     occurrenceCount: { type: Number, default: 0 },

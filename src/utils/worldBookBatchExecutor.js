@@ -5,7 +5,7 @@ import {
 } from '@/utils/worldBookTranslationWorkflow';
 
 export async function executeWorldBookBatch({
-    batchIndex,
+    batchIndex: _batchIndex,
     batchIndices,
     entries,
     editableData,

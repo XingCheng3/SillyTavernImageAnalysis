@@ -8,7 +8,8 @@
     "build": "vite build && sh ./scripts/deploy-bt.sh",
     "build:only": "vite build",
     "deploy:bt": "sh ./scripts/deploy-bt.sh",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "lint": "eslint src --ext .js,.vue"
   },
   "dependencies": {
     "@azure/identity": "^4.0.1",
@@ -31,14 +32,19 @@
     "vue-router": "^4.2.4"
   },
   "devDependencies": {
+    "@eslint/js": "^9.39.4",
     "@iconify/json": "^2.2.323",
     "@vitejs/plugin-vue": "^4.2.3",
+    "eslint": "^9.39.4",
+    "eslint-plugin-vue": "^9.33.0",
+    "globals": "^15.15.0",
     "rollup-plugin-copy": "^3.5.0",
     "sass": "^1.86.3",
     "terser": "^5.43.1",
     "unplugin-auto-import": "^19.1.2",
     "unplugin-icons": "^22.1.0",
     "unplugin-vue-components": "^28.4.1",
-    "vite": "^4.4.9"
+    "vite": "^4.4.9",
+    "vue-eslint-parser": "^9.4.3"
   }
 }

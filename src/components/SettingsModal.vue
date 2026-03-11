@@ -138,7 +138,7 @@ const testMessage = ref('');
 const isTestSuccess = ref(false);
 const saveMessage = ref('');
 const isSaveSuccess = ref(false);
-const { confirmDialog, openConfirmDialog, closeConfirmDialog, confirmAction } = useConfirmDialog();
+const { confirmDialog, closeConfirmDialog, confirmAction } = useConfirmDialog();
 
 const close = () => {
     emit('close');
@@ -193,26 +193,6 @@ const saveSettings = async () => {
     } finally {
         isSaving.value = false;
     }
-};
-
-const resetTranslationConfig = () => {
-    openConfirmDialog({
-        title: '重置翻译配置',
-        message: '确定要将翻译配置重置为默认值吗？',
-        description: '系统提示词和破限文本都会恢复为默认内容。',
-        confirmText: '重置',
-        variant: 'warning',
-    }, () => {
-        appStore.resetTranslationConfig();
-        saveMessage.value = '翻译配置已重置为默认值';
-        isSaveSuccess.value = true;
-
-        setTimeout(() => {
-            if (isSaveSuccess.value && saveMessage.value.includes('重置')) {
-                saveMessage.value = '';
-            }
-        }, 2000);
-    });
 };
 
 const fetchModels = async () => {

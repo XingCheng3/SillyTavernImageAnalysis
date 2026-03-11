@@ -77,7 +77,7 @@
 </template>
 
 <script setup>
-import { ref, watch, computed } from 'vue';
+import { ref, watch } from 'vue';
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue';
 import { useConfirmDialog } from '@/composables/useConfirmDialog';
 import { useAppStore } from '@/stores/app';

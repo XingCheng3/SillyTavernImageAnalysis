@@ -103,7 +103,7 @@
 </template>
 
 <script setup>
-const props = defineProps({
+defineProps({
     show: { type: Boolean, required: true },
     isTranslating: { type: Boolean, required: true },
     isTranslationError: { type: Boolean, required: true },

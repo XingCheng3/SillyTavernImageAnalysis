@@ -1,9 +1,5 @@
 import {createRouter, createWebHashHistory} from "vue-router";
-import {useAppStore} from "@/stores/app";
-import {useUserStore} from "@/stores/user";
-import Cookies from 'js-cookie';
-
-// cookies
+// 预留：后续如恢复登录拦截可重新引入 store / cookies
 
 // 创建一个通用的组件加载函数
 const loadView = (viewPath) => {

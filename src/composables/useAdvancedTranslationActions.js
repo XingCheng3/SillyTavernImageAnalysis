@@ -244,8 +244,8 @@ export function useAdvancedTranslationActions({
                         errorMessage = errorObj.message || err.message;
                     }
                 }
-            } catch (_parseErr) {
-                console.log('非JSON格式错误，使用原始信息');
+            } catch {
+                // 非 JSON 错误，保持原始错误信息
             }
 
             const friendlyMessage = getFriendlyErrorMessage(errorDetails || { message: errorMessage });

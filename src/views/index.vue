@@ -267,7 +267,6 @@ import BasicInfoTab from '@/components/tabs/BasicInfoTab.vue';
 import AdvancedSettingsTab from '@/components/tabs/AdvancedSettingsTab.vue';
 import WorldBookTab from '@/components/tabs/WorldBookTab.vue';
 import { buildTranslationPrompt, getFriendlyErrorMessage, mapErrorCode } from '@/utils/translationHelpers';
-import pako from 'pako';
 import SettingsModal from '../components/SettingsModal.vue';
 import TranslationPromptModal from '../components/TranslationPromptModal.vue';
 import JailbreakTextModal from '../components/JailbreakTextModal.vue';
@@ -280,7 +279,7 @@ import ErrorModal from '@/components/modals/ErrorModal.vue';
 import NotificationBanner from '@/components/common/NotificationBanner.vue';
 import { useAppStore } from '@/stores/app';
 import { storeToRefs } from 'pinia';
-import CharacterCardParser, { CharacterCardUtils } from '@/utils/characterCardParser';
+import { CharacterCardUtils } from '@/utils/characterCardParser';
 import { useStreamTranslation } from '@/composables/useStreamTranslation';
 import { useOperationFeedback } from '@/composables/useOperationFeedback';
 import { useGlobalReplace } from '@/composables/useGlobalReplace';
@@ -296,23 +295,15 @@ import { useWorldBookActions } from '@/composables/useWorldBookActions';
 import { splitIntoBatches, buildBookTranslationTags, BatchState } from '@/utils/batchTranslationHelper';
 import { executeWorldBookBatch } from '@/utils/worldBookBatchExecutor';
 import {
-    buildWorldBookSystemPrompt,
     collectBookBatchResults,
-    collectStreamBatchResults,
     countBookTranslationItems,
     getBookFieldsToTranslate,
     getSelectedBookIndices,
     normalizeWorldBookMissingItems,
-    parseWorldBookBatchResults,
 } from '@/utils/worldBookTranslationWorkflow';
 
 const appStore = useAppStore();
 const { apiSettings, translationConfig } = storeToRefs(appStore);
-
-// API配置状态检查：用于显示状态，不再用于禁用按钮
-const isApiReady = computed(() => {
-    return !!(apiSettings.value.url && apiSettings.value.model);
-});
 
 // 检查API配置并显示友好提示
 const checkAndPromptApiConfig = () => {
@@ -337,7 +328,6 @@ const editableData = ref(null); // 可编辑的数据副本
 const isLoading = ref(false);
 const error = ref('');
 const activeTab = ref('basic');
-const debugMode = ref(true); // 开启调试模式
 const showSettingsModal = ref(false);
 const showPromptModal = ref(false);
 const showJailbreakModal = ref(false);
@@ -363,9 +353,7 @@ const selectedBookEntries = ref([]);
 // 世界书流式翻译和分批支持
 const bookBatchTranslateModalRef = ref(null); // 模态框引用
 const bookBatchState = new BatchState(); // 批次状态管理
-const { 
-    isStreaming: isBookStreaming,
-    currentBatch: bookCurrentBatch,
+const {
     streamTranslate: bookStreamTranslate,
     cancelStream: cancelBookStream
 } = useStreamTranslation();
@@ -415,10 +403,6 @@ const {
 } = useOperationFeedback();
 
 const {
-    translationStartTime,
-    bookTranslationStartTime,
-    advancedTranslationStartTime,
-    currentTime,
     startTimeTracking,
     startBookTimeTracking,
     startAdvancedTimeTracking,
@@ -433,8 +417,6 @@ const {
 } = useTranslationTiming();
 
 const {
-    snapshots,
-    snapshotCursor,
     snapshotMeta,
     canUndoSnapshot,
     canRestoreInitialSnapshot,
@@ -495,8 +477,6 @@ const {
     totalFieldsToTranslate,
     translationErrors,
     isTranslationComplete,
-    cancelTranslationFlag,
-    basicTranslationAbortController,
     isTranslationError,
     canRetryTranslation,
     selectAllFields,
@@ -522,7 +502,6 @@ const {
 const {
     showCompareModal,
     translationCompareData,
-    translationResults,
     finalTranslationInfo,
     prepareTranslationCompare,
     prepareBookTranslationCompare,
@@ -1023,8 +1002,8 @@ const startBookBatchTranslation = async () => {
                     errorMessage = errorObj.message || err.message;
                 }
             }
-        } catch (parseErr) {
-            console.log('非JSON格式错误，使用原始信息');
+        } catch {
+            // 非 JSON 错误，保持原始错误信息
         }
         
         // 显示用户友好的错误信息弹窗
