@@ -294,6 +294,7 @@ import { useBasicTranslation } from '@/composables/useBasicTranslation';
 import { useAdvancedTranslationActions } from '@/composables/useAdvancedTranslationActions';
 import { useWorldBookActions } from '@/composables/useWorldBookActions';
 import { splitIntoBatches, buildBookTranslationTags, BatchState } from '@/utils/batchTranslationHelper';
+import { executeWorldBookBatch } from '@/utils/worldBookBatchExecutor';
 import {
     buildWorldBookSystemPrompt,
     collectBookBatchResults,

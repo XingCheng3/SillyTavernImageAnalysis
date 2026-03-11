@@ -88,10 +88,15 @@
                                 <button @click="$emit('deselect-all-entries')" class="action-btn secondary">取消</button>
                             </div>
                         </div>
-                        <div class="entries-list">
-                            <label v-for="(entry, index) in entries" :key="index" class="entry-item">
-                                <input type="checkbox" v-model="selectedEntries[index]" />
-                                <span class="entry-name">{{ entry.name || `条目 ${index + 1}` }}</span>
+                        <div class="entries-list book-entry-selection-list">
+                            <label v-for="(entry, index) in entries" :key="index" class="entry-item book-entry-option">
+                                <div class="entry-item-main">
+                                    <input type="checkbox" v-model="selectedEntries[index]" />
+                                    <div class="entry-copy">
+                                        <span class="entry-name">{{ entry.name || `条目 ${index + 1}` }}</span>
+                                        <span class="entry-preview">{{ (entry.content || '暂无条目内容').slice(0, 90) }}{{ (entry.content || '').length > 90 ? '…' : '' }}</span>
+                                    </div>
+                                </div>
                                 <span class="entry-index">#{{ index + 1 }}</span>
                             </label>
                         </div>
@@ -289,7 +294,74 @@ defineExpose({
 </script>
 
 <style scoped>
-/* 使用父级的样式类，不做额外样式 */
+.book-entry-selection-list {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+    max-height: 360px;
+    overflow: auto;
+}
+
+.book-entry-option {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 14px 16px;
+    border-radius: 16px;
+    border: 1px solid #dfdbd3;
+    background: #fff;
+    cursor: pointer;
+}
+
+.entry-item-main {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    min-width: 0;
+    flex: 1;
+}
+
+.entry-copy {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    min-width: 0;
+}
+
+.entry-name {
+    color: #1c1917;
+    font-weight: 700;
+    line-height: 1.5;
+    word-break: break-word;
+}
+
+.entry-preview {
+    color: #78716c;
+    font-size: 13px;
+    line-height: 1.6;
+    word-break: break-word;
+}
+
+.entry-index {
+    flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    min-height: 28px;
+    padding: 4px 10px;
+    border-radius: 999px;
+    background: #f7f6f3;
+    border: 1px solid #dfdbd3;
+    color: #57534e;
+    font-size: 12px;
+    font-weight: 700;
+}
+
+@media (max-width: 900px) {
+    .book-entry-selection-list {
+        grid-template-columns: 1fr;
+    }
+}
 </style>
 
 
