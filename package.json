@@ -9,7 +9,10 @@
     "build:only": "vite build",
     "deploy:bt": "sh ./scripts/deploy-bt.sh",
     "preview": "vite preview",
-    "lint": "eslint src --ext .js,.vue"
+    "lint": "eslint src --ext .js,.vue",
+    "test:parser": "node tests/characterCardParser.test.js",
+    "test:worldbook-ai": "node tests/worldBookAIGeneration.test.js",
+    "test:all": "npm run test:parser && npm run test:worldbook-ai"
   },
   "dependencies": {
     "@azure/identity": "^4.0.1",
