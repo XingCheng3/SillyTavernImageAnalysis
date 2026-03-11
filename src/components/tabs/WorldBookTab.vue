@@ -10,6 +10,7 @@
                     </p>
                 </div>
                 <div class="intro-actions">
+                    <button @click="$emit('open-ai-generate')" class="small-button">AI 代写世界书</button>
                     <button @click="$emit('open-batch-translate')" class="small-button" :disabled="!editableData.book_entries || editableData.book_entries.length === 0">
                         批量翻译条目
                     </button>
@@ -236,7 +237,7 @@ defineProps({
     isV3: { type: Boolean, default: false },
 });
 
-defineEmits(['open-batch-translate', 'add-entry', 'remove-entry', 'create-book', 'update-keys']);
+defineEmits(['open-ai-generate', 'open-batch-translate', 'add-entry', 'remove-entry', 'create-book', 'update-keys']);
 </script>
 
 <style scoped>
