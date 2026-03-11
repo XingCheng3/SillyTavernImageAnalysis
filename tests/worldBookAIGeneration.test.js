@@ -17,6 +17,8 @@ import {
     WORLD_BOOK_PATCH_MODE,
     WORLD_BOOK_PATCH_SCOPE,
     applyLocalPatchToEntry,
+    findWorldBookEntryIndex,
+    getPatchTargetText,
     validatePatchInstruction,
 } from '../src/utils/worldBookAIPatchSchema.js';
 
@@ -173,6 +175,23 @@ function testPatchSchemaAndApply() {
     assert.equal(patched.content, '第一段。\n\n新的第二段内容。\n\n第三段。');
 }
 
+function testPatchHelpers() {
+    const entries = [
+        { id: 5, content: 'A' },
+        { id: 8, content: '第一段。\n\n第二段。' },
+    ];
+
+    assert.equal(findWorldBookEntryIndex(entries, '8'), 1);
+    assert.equal(findWorldBookEntryIndex(entries, '404'), -1);
+
+    const target = getPatchTargetText(entries[1], {
+        scope: WORLD_BOOK_PATCH_SCOPE.PARAGRAPH,
+        field: 'content',
+        paragraphIndex: 1,
+    });
+    assert.equal(target, '第二段。');
+}
+
 function runAllTests() {
     console.log('🚀 开始运行世界书 AI 代写基础能力测试\n');
 
@@ -191,7 +210,10 @@ function runAllTests() {
     testPatchSchemaAndApply();
     console.log('✓ 局部改写 patch 结构与本地应用正确');
 
-    console.log('\n✅ 世界书 AI 代写 M0/M1/M2 基础测试通过');
+    testPatchHelpers();
+    console.log('✓ 局部改写辅助能力正确');
+
+    console.log('\n✅ 世界书 AI 代写 M0/M1/M2/M3 基础测试通过');
 }
 
 runAllTests();

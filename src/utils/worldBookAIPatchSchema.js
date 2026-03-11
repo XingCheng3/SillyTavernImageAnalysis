@@ -22,6 +22,17 @@ function splitParagraphs(content = '') {
         .filter(Boolean);
 }
 
+export function getEntryParagraphs(entry = {}) {
+    return splitParagraphs(entry.content || '');
+}
+
+export function findWorldBookEntryIndex(entries = [], entryId = '') {
+    const target = normalizeString(entryId);
+    if (!target) return -1;
+
+    return entries.findIndex((entry) => normalizeString(entry?.id) === target);
+}
+
 export function createPatchInstruction(raw = {}) {
     const scope = raw.scope || WORLD_BOOK_PATCH_SCOPE.ENTRY;
     const mode = raw.mode || WORLD_BOOK_PATCH_MODE.REWRITE;
@@ -89,6 +100,24 @@ export function validatePatchInstruction(raw = {}) {
     };
 }
 
+export function getPatchTargetText(entry = {}, patch = {}) {
+    const normalizedPatch = createPatchInstruction(patch);
+
+    if (normalizedPatch.field !== 'content') {
+        return normalizeString(entry[normalizedPatch.field]);
+    }
+
+    const content = normalizeString(entry.content);
+
+    if (normalizedPatch.scope === WORLD_BOOK_PATCH_SCOPE.PARAGRAPH) {
+        const paragraphs = splitParagraphs(content);
+        const idx = normalizedPatch.paragraphIndex ?? 0;
+        return paragraphs[idx] || '';
+    }
+
+    return content;
+}
+
 export function applyLocalPatchToEntry(entry = {}, patch = {}) {
     const normalizedPatch = createPatchInstruction(patch);
     const next = { ...entry };
@@ -136,4 +165,19 @@ export function applyLocalPatchToEntry(entry = {}, patch = {}) {
     }
 
     return next;
+}
+
+export function buildPatchPreview(entry = {}, patch = {}) {
+    const normalizedPatch = createPatchInstruction(patch);
+    const beforeText = getPatchTargetText(entry, normalizedPatch);
+    const nextEntry = applyLocalPatchToEntry(entry, normalizedPatch);
+    const afterText = getPatchTargetText(nextEntry, normalizedPatch);
+
+    return {
+        patch: normalizedPatch,
+        beforeText,
+        afterText,
+        changed: beforeText !== afterText,
+        nextEntry,
+    };
 }

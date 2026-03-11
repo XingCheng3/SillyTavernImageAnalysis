@@ -117,6 +117,7 @@
                         :hasCharacterBook="hasCharacterBook()"
                         :isV3="isV3Card()"
                         @open-ai-generate="openWorldBookAIGenerateModal"
+                        @open-ai-patch="openWorldBookAIPatchModal"
                         @open-batch-translate="showBookBatchTranslateModal = true"
                         @add-entry="addBookEntry"
                         @remove-entry="removeBookEntry"
@@ -228,6 +229,17 @@
             @generate="handleGenerateWorldBookAIDraft"
             @apply="handleApplyWorldBookAIDraft"
         />
+
+        <WorldBookAIPatchModal
+            :show="showWorldBookAIPatchModal"
+            :isGenerating="isWorldBookAIPatching"
+            :form="worldBookAIPatchForm"
+            :preview="worldBookAIPatchPreview"
+            :entries="editableData?.book_entries || []"
+            @close="closeWorldBookAIPatchModal"
+            @generate="handleGenerateWorldBookAIPatchPreview"
+            @apply="handleApplyWorldBookAIPatch"
+        />
         
         <!-- 高级设置批量翻译模态框（组件化） -->
         <AdvancedBatchTranslateModal
@@ -286,6 +298,7 @@ import TranslationCompareModal from '../components/TranslationCompareModal.vue';
 import BatchTranslateModal from '@/components/modals/BatchTranslateModal.vue';
 import BookBatchTranslateModal from '@/components/modals/BookBatchTranslateModal.vue';
 import WorldBookAIGenerateModal from '@/components/modals/WorldBookAIGenerateModal.vue';
+import WorldBookAIPatchModal from '@/components/modals/WorldBookAIPatchModal.vue';
 import AdvancedBatchTranslateModal from '@/components/modals/AdvancedBatchTranslateModal.vue';
 import GlobalReplaceModal from '@/components/modals/GlobalReplaceModal.vue';
 import ErrorModal from '@/components/modals/ErrorModal.vue';
@@ -306,6 +319,7 @@ import { useBasicTranslation } from '@/composables/useBasicTranslation';
 import { useAdvancedTranslationActions } from '@/composables/useAdvancedTranslationActions';
 import { useWorldBookActions } from '@/composables/useWorldBookActions';
 import { useWorldBookAIGeneration } from '@/composables/useWorldBookAIGeneration';
+import { useWorldBookAIPatch } from '@/composables/useWorldBookAIPatch';
 import { splitIntoBatches, buildBookTranslationTags, BatchState } from '@/utils/batchTranslationHelper';
 import { executeWorldBookBatch } from '@/utils/worldBookBatchExecutor';
 import {
@@ -377,6 +391,17 @@ const worldBookAIGenerateForm = reactive({
     replaceExisting: false,
 });
 
+const showWorldBookAIPatchModal = ref(false);
+const worldBookAIPatchForm = reactive({
+    entryId: '',
+    scope: 'paragraph',
+    mode: 'rewrite',
+    field: 'content',
+    paragraphIndex: 0,
+    instruction: '',
+    keepStyle: true,
+});
+
 // 世界书流式翻译和分批支持
 const bookBatchTranslateModalRef = ref(null); // 模态框引用
 const bookBatchState = new BatchState(); // 批次状态管理
@@ -417,6 +442,45 @@ watch(showAdvancedBatchTranslateModal, (val) => {
         selectedAlternateGreetings.value = [];
     }
 });
+
+watch(() => editableData.value?.book_entries, (entries) => {
+    const list = Array.isArray(entries) ? entries : [];
+    if (!list.length) {
+        worldBookAIPatchForm.entryId = '';
+        return;
+    }
+
+    const matched = list.some(entry => String(entry.id) === String(worldBookAIPatchForm.entryId));
+    if (!matched) {
+        worldBookAIPatchForm.entryId = String(list[0].id);
+    }
+}, { deep: true });
+
+watch(() => worldBookAIPatchForm.scope, (scope) => {
+    if (scope !== 'paragraph') {
+        worldBookAIPatchForm.paragraphIndex = 0;
+    }
+    if (scope !== 'field') {
+        worldBookAIPatchForm.field = 'content';
+    }
+});
+
+watch(
+    () => [
+        worldBookAIPatchForm.entryId,
+        worldBookAIPatchForm.scope,
+        worldBookAIPatchForm.mode,
+        worldBookAIPatchForm.field,
+        worldBookAIPatchForm.paragraphIndex,
+        worldBookAIPatchForm.instruction,
+        worldBookAIPatchForm.keepStyle,
+    ],
+    () => {
+        if (worldBookAIPatchPreview.value) {
+            clearWorldBookAIPatchPreview();
+        }
+    },
+);
 
 // 全局替换相关变量
 const {
@@ -496,6 +560,18 @@ const {
     generateDraft: generateWorldBookAIDraft,
     applyDraftToEditableData,
 } = useWorldBookAIGeneration({
+    apiSettings,
+    openErrorModal,
+    showOperationNotice,
+});
+
+const {
+    isPatching: isWorldBookAIPatching,
+    patchPreview: worldBookAIPatchPreview,
+    clearPatchPreview: clearWorldBookAIPatchPreview,
+    generatePatchPreview: generateWorldBookAIPatchPreview,
+    applyPatchPreviewToEditableData,
+} = useWorldBookAIPatch({
     apiSettings,
     openErrorModal,
     showOperationNotice,
@@ -802,6 +878,81 @@ const handleApplyWorldBookAIDraft = () => {
         openErrorModal({
             title: '应用世界书草稿失败',
             code: 'AI_WORLD_BOOK_APPLY_FAILED',
+            message: error.message,
+            details: { message: error.message },
+        });
+    }
+};
+
+const openWorldBookAIPatchModal = () => {
+    const entries = editableData.value?.book_entries || [];
+    if (!entries.length) {
+        showOperationNotice({
+            type: 'warning',
+            title: '当前没有可改写条目',
+            message: '请先添加世界书条目，或先用 AI 代写生成功能创建条目。',
+            duration: 4000,
+        });
+        return;
+    }
+
+    if (!worldBookAIPatchForm.entryId) {
+        worldBookAIPatchForm.entryId = String(entries[0].id);
+    }
+
+    clearWorldBookAIPatchPreview();
+    showWorldBookAIPatchModal.value = true;
+};
+
+const closeWorldBookAIPatchModal = () => {
+    showWorldBookAIPatchModal.value = false;
+    clearWorldBookAIPatchPreview();
+};
+
+const handleGenerateWorldBookAIPatchPreview = async () => {
+    if (!checkAndPromptApiConfig()) {
+        return;
+    }
+
+    try {
+        await generateWorldBookAIPatchPreview({
+            editableData: editableData.value,
+            patchForm: worldBookAIPatchForm,
+        });
+    } catch {
+        // 错误已经在 composable 内统一提示
+    }
+};
+
+const handleApplyWorldBookAIPatch = () => {
+    if (!worldBookAIPatchPreview.value) {
+        showOperationNotice({
+            type: 'warning',
+            title: '还没有可应用的改写预览',
+            message: '请先生成改写预览。',
+            duration: 3500,
+        });
+        return;
+    }
+
+    try {
+        pushSnapshot('AI局部改写世界书');
+
+        const result = applyPatchPreviewToEditableData(editableData.value, worldBookAIPatchPreview.value);
+
+        showOperationNotice({
+            type: result.changed ? 'success' : 'warning',
+            title: result.changed ? '已应用 AI 局部改写' : '已应用改写（内容无变化）',
+            message: `条目：${result.entryTitle}，字段：${result.field}`,
+            duration: 4200,
+        });
+
+        closeWorldBookAIPatchModal();
+        clearWorldBookAIPatchPreview();
+    } catch (error) {
+        openErrorModal({
+            title: '应用局部改写失败',
+            code: 'AI_WORLD_BOOK_PATCH_APPLY_FAILED',
             message: error.message,
             details: { message: error.message },
         });
