@@ -207,10 +207,12 @@ export function validateWorldBookGenerationDraft(draft, options = {}) {
 
 export function mapDraftEntriesToEditableEntries(entries = [], options = {}) {
     const startIndex = Number.isFinite(options.startIndex) ? Math.max(0, Math.trunc(options.startIndex)) : 0;
+    const startId = Number.isFinite(options.startId) ? Math.max(0, Math.trunc(options.startId)) : startIndex;
     const startOrder = Number.isFinite(options.startOrder) ? Math.max(0, Math.trunc(options.startOrder)) : 0;
 
     return entries.map((entry, index) => {
         const targetIndex = startIndex + index;
+        const targetId = startId + index;
         const base = createEmptyBookEntry(targetIndex);
 
         const light = isValidContextLight(entry.light)
@@ -224,7 +226,7 @@ export function mapDraftEntriesToEditableEntries(entries = [], options = {}) {
 
         const withLight = applyContextLight({
             ...base,
-            id: targetIndex,
+            id: targetId,
             name: entry.title,
             comment: entry.comment || entry.title,
             keys,
@@ -287,7 +289,13 @@ export function validateGenerationInput(input = {}) {
     }
 
     const openingCount = Number(input.openingCount ?? 0);
-    if (Number.isFinite(openingCount) && openingCount > 5) {
+    if (!Number.isFinite(openingCount) || openingCount < 0) {
+        pushIssue(errors, {
+            path: 'openingCount',
+            code: 'OPENING_COUNT_INVALID',
+            message: 'openingCount 必须是大于等于 0 的数字。',
+        });
+    } else if (openingCount > 5) {
         pushIssue(warnings, {
             path: 'openingCount',
             code: 'OPENING_COUNT_HIGH',

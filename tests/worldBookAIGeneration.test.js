@@ -10,6 +10,7 @@ import {
 } from '../src/utils/worldBookAIGenerationSchema.js';
 import {
     mapDraftEntriesToEditableEntries,
+    validateGenerationInput,
     validateWorldBookGenerationDraft,
 } from '../src/utils/worldBookAIGenerationValidator.js';
 import {
@@ -117,13 +118,40 @@ function testValidatorAndMapping() {
     const validResult = validateWorldBookGenerationDraft(validDraft, { requireContent: true });
     assert.equal(validResult.ok, true);
 
-    const mapped = mapDraftEntriesToEditableEntries(validResult.normalized.entries);
+    const mapped = mapDraftEntriesToEditableEntries(validResult.normalized.entries, {
+        startIndex: 7,
+        startId: 20,
+        startOrder: 90,
+    });
     assert.equal(mapped.length, 2);
     assert.equal(mapped[0].selective, true, '蓝灯应映射为 selective=true');
     assert.equal(mapped[0].constant, false);
     assert.equal(mapped[1].constant, true, '绿灯应映射为 constant=true');
     assert.equal(mapped[1].selective, false);
     assert.equal(mapped[0].keysText, '规则, 联邦');
+    assert.equal(mapped[0].id, 20);
+    assert.equal(mapped[1].id, 21);
+    assert.equal(mapped[0].insertion_order, 100);
+    assert.equal(mapped[1].insertion_order, 110);
+}
+
+function testGenerationInputValidation() {
+    const invalid = validateGenerationInput({
+        premise: '测试',
+        targetEntryCount: 12,
+        openingCount: -1,
+    });
+
+    assert.equal(invalid.ok, false);
+    assert.ok(invalid.errors.some(item => item.code === 'OPENING_COUNT_INVALID'));
+
+    const valid = validateGenerationInput({
+        premise: '测试主线',
+        targetEntryCount: 16,
+        openingCount: 3,
+    });
+
+    assert.equal(valid.ok, true);
 }
 
 function testPatchSchemaAndApply() {
@@ -157,10 +185,13 @@ function runAllTests() {
     testValidatorAndMapping();
     console.log('✓ 草稿校验与编辑态映射正确');
 
+    testGenerationInputValidation();
+    console.log('✓ 生成输入校验正确');
+
     testPatchSchemaAndApply();
     console.log('✓ 局部改写 patch 结构与本地应用正确');
 
-    console.log('\n✅ 世界书 AI 代写 M0/M1 测试通过');
+    console.log('\n✅ 世界书 AI 代写 M0/M1/M2 基础测试通过');
 }
 
 runAllTests();

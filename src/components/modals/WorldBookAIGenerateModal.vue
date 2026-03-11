@@ -110,7 +110,7 @@
 
             <div class="modal-footer">
                 <button class="action-button secondary" @click="$emit('close')">取消</button>
-                <button class="action-button" @click="$emit('generate')" :disabled="isGenerating">
+                <button class="action-button" @click="$emit('generate')" :disabled="isGenerating || !form.premise?.trim()">
                     {{ isGenerating ? '生成中...' : '生成草稿' }}
                 </button>
                 <button class="action-button" @click="$emit('apply')" :disabled="!draft || isGenerating">应用草稿</button>

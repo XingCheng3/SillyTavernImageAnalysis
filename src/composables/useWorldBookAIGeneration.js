@@ -10,6 +10,32 @@ import {
     validateWorldBookGenerationDraft,
 } from '@/utils/worldBookAIGenerationValidator';
 
+function getNextStartId(entries = []) {
+    let maxId = -1;
+    entries.forEach((entry) => {
+        const parsed = Number.parseInt(entry?.id, 10);
+        if (Number.isFinite(parsed)) {
+            maxId = Math.max(maxId, parsed);
+        }
+    });
+    return maxId + 1;
+}
+
+function getNextStartOrder(entries = []) {
+    let maxOrder = -10;
+    entries.forEach((entry) => {
+        const candidate = Number.isFinite(entry?.insertion_order)
+            ? entry.insertion_order
+            : entry?.priority;
+
+        if (Number.isFinite(candidate)) {
+            maxOrder = Math.max(maxOrder, candidate);
+        }
+    });
+
+    return maxOrder + 10;
+}
+
 function extractJsonText(raw = '') {
     const text = String(raw || '').trim();
     if (!text) return '';
@@ -158,10 +184,12 @@ export function useWorldBookAIGeneration({ apiSettings, openErrorModal, showOper
         const replaceExisting = options.replaceExisting === true;
         const currentEntries = Array.isArray(editableData.book_entries) ? editableData.book_entries : [];
         const startIndex = replaceExisting ? 0 : currentEntries.length;
-        const startOrder = replaceExisting ? 0 : currentEntries.length * 10;
+        const startId = replaceExisting ? 0 : getNextStartId(currentEntries);
+        const startOrder = replaceExisting ? 0 : getNextStartOrder(currentEntries);
 
         const mappedEntries = mapDraftEntriesToEditableEntries(validation.normalized.entries, {
             startIndex,
+            startId,
             startOrder,
         });
 
