@@ -21,8 +21,9 @@
                 <div class="upload-stack">
                     <label for="file-upload" class="upload-button">选择角色卡（PNG / JSON）</label>
                     <input id="file-upload" type="file" accept="image/png,application/json,.json" @change="handleFileUpload" class="hidden" />
+                    <button type="button" @click="openCharacterAICreateModal" class="tool-button">从 0 创建角色卡</button>
                     <p v-if="fileName" class="file-name">已选择：{{ fileName }}</p>
-                    <p v-else class="file-hint">支持 PNG 角色卡 与 JSON 角色卡，选完后可直接在右侧继续编辑、快照和导出。</p>
+                    <p v-else class="file-hint">支持 PNG 角色卡 与 JSON 角色卡；也可不选文件，直接用提示词从 0 创建角色卡。</p>
                 </div>
 
                 <div class="workspace-actions">
@@ -37,6 +38,8 @@
                         <button type="button" @click="saveManualSnapshot" class="snapshot-button">保存快照</button>
                         <button type="button" @click="undoLastSnapshot" class="snapshot-button secondary" :disabled="!canUndoSnapshot">撤销</button>
                         <button type="button" @click="restoreInitialSnapshot" class="snapshot-button secondary" :disabled="!canRestoreInitialSnapshot">恢复初始</button>
+                        <label for="cover-upload" class="tool-button">替换 / 增加封面</label>
+                        <input id="cover-upload" type="file" accept="image/png,image/jpeg,image/webp" @change="handleCoverUpload" class="hidden" />
                         <span v-if="snapshotMeta.currentLabel" class="snapshot-chip">当前快照：{{ snapshotMeta.currentLabel }}</span>
                         <button type="button" @click="exportCharacterCard" class="export-button">导出角色卡</button>
                     </div>
@@ -58,7 +61,7 @@
             <!-- 角色卡基本信息展示区域 -->
             <div class="character-info-section">
                 <div class="character-image">
-                    <img :src="imagePreview" alt="角色预览" />
+                    <img :src="displayImagePreview" alt="角色预览" />
                 </div>
                 
                 <div class="character-details">
@@ -138,6 +141,17 @@
 
         </div>
         
+        <CharacterAICreateModal
+            :show="showCharacterAICreateModal"
+            :isGenerating="isCharacterAICreating"
+            :form="characterAICreateForm"
+            :draft="characterAICreateDraft"
+            :warnings="characterAICreateWarnings"
+            @close="closeCharacterAICreateModal"
+            @generate="handleGenerateCharacterAIDraft"
+            @apply="handleApplyCharacterAIDraft"
+        />
+
         <SettingsModal :show="showSettingsModal" @close="showSettingsModal = false" @save="handleSaveSettings" />
         
         <!-- 翻译提示词模态框 -->
@@ -297,6 +311,7 @@ import JailbreakTextModal from '../components/JailbreakTextModal.vue';
 import TranslationCompareModal from '../components/TranslationCompareModal.vue';
 import BatchTranslateModal from '@/components/modals/BatchTranslateModal.vue';
 import BookBatchTranslateModal from '@/components/modals/BookBatchTranslateModal.vue';
+import CharacterAICreateModal from '@/components/modals/CharacterAICreateModal.vue';
 import WorldBookAIGenerateModal from '@/components/modals/WorldBookAIGenerateModal.vue';
 import WorldBookAIPatchModal from '@/components/modals/WorldBookAIPatchModal.vue';
 import AdvancedBatchTranslateModal from '@/components/modals/AdvancedBatchTranslateModal.vue';
@@ -318,6 +333,7 @@ import { useCharacterEditor } from '@/composables/useCharacterEditor';
 import { useBasicTranslation } from '@/composables/useBasicTranslation';
 import { useAdvancedTranslationActions } from '@/composables/useAdvancedTranslationActions';
 import { useWorldBookActions } from '@/composables/useWorldBookActions';
+import { useCharacterAICreation } from '@/composables/useCharacterAICreation';
 import { useWorldBookAIGeneration } from '@/composables/useWorldBookAIGeneration';
 import { useWorldBookAIPatch } from '@/composables/useWorldBookAIPatch';
 import { splitIntoBatches, buildBookTranslationTags, BatchState } from '@/utils/batchTranslationHelper';
@@ -348,8 +364,24 @@ const checkAndPromptApiConfig = () => {
     return true;
 };
 
+const DEFAULT_COVER_IMAGE_DATA_URI = 'data:image/svg+xml;utf8,' + encodeURIComponent(`
+<svg xmlns="http://www.w3.org/2000/svg" width="640" height="900" viewBox="0 0 640 900">
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#f5f5f4"/>
+      <stop offset="100%" stop-color="#e7e5e4"/>
+    </linearGradient>
+  </defs>
+  <rect width="640" height="900" fill="url(#g)"/>
+  <rect x="52" y="72" width="536" height="756" rx="26" fill="#ffffff" stroke="#d6d3d1" stroke-width="2"/>
+  <text x="320" y="410" font-size="36" text-anchor="middle" fill="#57534e" font-family="Arial, sans-serif">角色卡封面</text>
+  <text x="320" y="462" font-size="22" text-anchor="middle" fill="#a8a29e" font-family="Arial, sans-serif">可上传替换</text>
+</svg>
+`);
+
 const fileName = ref('');
 const imagePreview = ref('');
+const imagePreviewObjectUrl = ref('');
 const originalFileBytes = ref(null); // 保存原始文件字节数据用于导出
 const characterData = ref(null);
 const editableData = ref(null); // 可编辑的数据副本
@@ -359,6 +391,17 @@ const activeTab = ref('basic');
 const showSettingsModal = ref(false);
 const showPromptModal = ref(false);
 const showJailbreakModal = ref(false);
+const showCharacterAICreateModal = ref(false);
+const characterAICreateForm = reactive({
+    corePrompt: '',
+    genre: '',
+    style: '',
+    relationshipTone: '',
+    targetEntryCount: 16,
+    openingCount: 3,
+    notes: '',
+    applyOpeningsToGreetings: true,
+});
 
 // 世界书批量翻译相关变量
 const showBookBatchTranslateModal = ref(false);
@@ -557,6 +600,19 @@ const {
 });
 
 const {
+    isGenerating: isCharacterAICreating,
+    draft: characterAICreateDraft,
+    draftWarnings: characterAICreateWarnings,
+    generateDraft: generateCharacterAIDraft,
+    buildCharacterTemplateFromDraft,
+    clearDraft: clearCharacterAIDraft,
+} = useCharacterAICreation({
+    apiSettings,
+    openErrorModal,
+    showOperationNotice,
+});
+
+const {
     isGenerating: isWorldBookAIGenerating,
     lastDraft: worldBookAIDraft,
     validationWarnings: worldBookAIWarnings,
@@ -698,6 +754,8 @@ const advancedProgressPercentage = computed(() => {
     return Math.round((advancedTranslatedCount.value / advancedTotalToTranslate.value) * 100);
 });
 
+const displayImagePreview = computed(() => imagePreview.value || DEFAULT_COVER_IMAGE_DATA_URI);
+
 const {
     selectAllAlternateGreetings,
     deselectAllAlternateGreetings,
@@ -738,6 +796,95 @@ const tabs = [
     // { id: 'json', name: '原始JSON' }
 ];
 
+const clearImagePreviewObjectUrl = () => {
+    if (imagePreviewObjectUrl.value) {
+        URL.revokeObjectURL(imagePreviewObjectUrl.value);
+        imagePreviewObjectUrl.value = '';
+    }
+};
+
+const setImagePreviewFromBlob = (blob) => {
+    clearImagePreviewObjectUrl();
+    const url = URL.createObjectURL(blob);
+    imagePreviewObjectUrl.value = url;
+    imagePreview.value = url;
+};
+
+const convertImageFileToPngBytes = async (file) => {
+    if (file.type === 'image/png') {
+        return new Uint8Array(await file.arrayBuffer());
+    }
+
+    let imageSource = null;
+    if (typeof createImageBitmap === 'function') {
+        imageSource = await createImageBitmap(file);
+    } else {
+        const dataUrl = await new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(reader.result);
+            reader.onerror = () => reject(new Error('读取封面文件失败。'));
+            reader.readAsDataURL(file);
+        });
+
+        imageSource = await new Promise((resolve, reject) => {
+            const img = new Image();
+            img.onload = () => resolve(img);
+            img.onerror = () => reject(new Error('加载封面图片失败。'));
+            img.src = dataUrl;
+        });
+    }
+
+    const canvas = document.createElement('canvas');
+    canvas.width = imageSource.width;
+    canvas.height = imageSource.height;
+
+    const ctx = canvas.getContext('2d');
+    if (!ctx) {
+        throw new Error('无法创建封面绘制上下文。');
+    }
+
+    ctx.drawImage(imageSource, 0, 0);
+
+    const pngBlob = await new Promise((resolve, reject) => {
+        canvas.toBlob((blob) => {
+            if (!blob) {
+                reject(new Error('封面转换为 PNG 失败。'));
+                return;
+            }
+            resolve(blob);
+        }, 'image/png');
+    });
+
+    return new Uint8Array(await pngBlob.arrayBuffer());
+};
+
+const handleCoverUpload = async (event) => {
+    const file = event.target.files[0];
+    if (!file) return;
+
+    try {
+        const pngBytes = await convertImageFileToPngBytes(file);
+        originalFileBytes.value = pngBytes;
+        setImagePreviewFromBlob(new Blob([pngBytes], { type: 'image/png' }));
+
+        showOperationNotice({
+            type: 'success',
+            title: '封面已更新',
+            message: '导出时将使用当前封面作为角色卡图片。',
+            duration: 4000,
+        });
+    } catch (error) {
+        showOperationNotice({
+            type: 'error',
+            title: '封面更新失败',
+            message: error.message,
+            duration: 5000,
+        });
+    } finally {
+        event.target.value = '';
+    }
+};
+
 // 处理文件上传
 const handleFileUpload = async (event) => {
     const file = event.target.files[0];
@@ -749,12 +896,15 @@ const handleFileUpload = async (event) => {
     characterData.value = null;
     editableData.value = null;
     originalFileBytes.value = null;
+    clearImagePreviewObjectUrl();
+    imagePreview.value = '';
     isLoading.value = true;
 
     try {
         const isJsonFile = file.type === 'application/json' || file.name.toLowerCase().endsWith('.json');
 
         if (isJsonFile) {
+            clearImagePreviewObjectUrl();
             imagePreview.value = '';
             const rawText = await file.text();
             const parseResult = CharacterCardUtils.parseJson(rawText);
@@ -768,9 +918,9 @@ const handleFileUpload = async (event) => {
             return;
         }
 
-        imagePreview.value = URL.createObjectURL(file);
         const arrayBuffer = await file.arrayBuffer();
         originalFileBytes.value = new Uint8Array(arrayBuffer);
+        setImagePreviewFromBlob(new Blob([originalFileBytes.value], { type: 'image/png' }));
 
         const parseResult = await CharacterCardUtils.parseFile(file);
 
@@ -806,6 +956,78 @@ const {
 const handleSaveSettings = (settings) => {
     // This event is kept for now, but settings are managed by Pinia
     console.log('API settings saved via modal event:', settings);
+};
+
+const openCharacterAICreateModal = () => {
+    clearCharacterAIDraft();
+    showCharacterAICreateModal.value = true;
+};
+
+const closeCharacterAICreateModal = () => {
+    showCharacterAICreateModal.value = false;
+};
+
+const handleGenerateCharacterAIDraft = async () => {
+    if (!checkAndPromptApiConfig()) {
+        return;
+    }
+
+    try {
+        await generateCharacterAIDraft({
+            ...characterAICreateForm,
+            language: 'zh-CN',
+        });
+    } catch {
+        // 错误已在 composable 统一处理
+    }
+};
+
+const handleApplyCharacterAIDraft = () => {
+    if (!characterAICreateDraft.value) {
+        showOperationNotice({
+            type: 'warning',
+            title: '还没有可应用的角色草稿',
+            message: '请先生成角色草稿。',
+            duration: 3500,
+        });
+        return;
+    }
+
+    try {
+        const { characterData: generatedCharacter, worldbookDraft } = buildCharacterTemplateFromDraft(characterAICreateDraft.value);
+
+        characterData.value = generatedCharacter;
+        fileName.value = `AI创建_${generatedCharacter.data?.name || '新角色'}.json`;
+        originalFileBytes.value = null;
+        clearImagePreviewObjectUrl();
+        imagePreview.value = '';
+
+        initEditableData();
+
+        const applyResult = applyDraftToEditableData(editableData.value, worldbookDraft, {
+            replaceExisting: true,
+            applyOpeningsToGreetings: characterAICreateForm.applyOpeningsToGreetings,
+        });
+
+        activeTab.value = 'basic';
+        selectedBookEntries.value = new Array(editableData.value.book_entries.length).fill(false);
+
+        showOperationNotice({
+            type: 'success',
+            title: '已创建角色卡草稿',
+            message: `角色 ${editableData.value.name || '未命名'} 已创建，世界书 ${applyResult.totalCount} 条。你现在可以继续编辑、上传封面后导出。`,
+            duration: 5200,
+        });
+
+        closeCharacterAICreateModal();
+    } catch (error) {
+        openErrorModal({
+            title: '应用角色草稿失败',
+            code: 'AI_CHARACTER_APPLY_FAILED',
+            message: error.message,
+            details: { message: error.message },
+        });
+    }
 };
 
 const openWorldBookAIGenerateModal = () => {
