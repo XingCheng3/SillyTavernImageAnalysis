@@ -141,3 +141,20 @@ export function buildWorldBookEntryCompletionUserPrompt({ input = {}, draft = {}
 
     return JSON.stringify(payload, null, 2);
 }
+
+export function buildCharacterAIJsonRepairUserPrompt({ rawText = '', schemaHint = '' } = {}) {
+    const payload = {
+        task: '修复为严格合法 JSON',
+        role: 'json_repairer',
+        rules: [
+            '只输出 JSON 本体，不要 markdown 代码块，不要解释',
+            '修复缺失引号、缺失逗号、未闭合对象/数组、转义错误',
+            '保留原始语义，禁止擅自新增无关字段',
+            '如果无法完全恢复，优先保留可确定字段并保证 JSON 可解析',
+        ],
+        schemaHint,
+        rawText,
+    };
+
+    return JSON.stringify(payload, null, 2);
+}

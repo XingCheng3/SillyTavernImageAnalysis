@@ -5,6 +5,7 @@ import {
     buildCharacterAICreateStructureUserPrompt,
     buildCharacterAICreateSystemPrompt,
     buildCharacterAICreateUserPrompt,
+    buildCharacterAIJsonRepairUserPrompt,
     buildWorldBookEntryCompletionUserPrompt,
 } from '@/utils/characterAICreationPrompt';
 import {
@@ -17,6 +18,21 @@ import {
     isRecoverableContentOnlyErrors,
     mergeRetryFailureLists,
 } from '@/utils/characterAICreationRetry';
+
+const JSON_REPAIR_SYSTEM_PROMPT = `你是严格 JSON 修复器。
+只输出合法 JSON，不要 markdown，不要解释。`;
+
+function stripCodeFence(raw = '') {
+    let text = String(raw || '').trim();
+    if (!text) return '';
+
+    if (text.startsWith('```')) {
+        text = text.replace(/^```[a-zA-Z0-9_-]*\s*/, '');
+    }
+
+    text = text.replace(/\s*```\s*$/, '');
+    return text.trim();
+}
 
 function extractJsonText(raw = '') {
     const text = String(raw || '').trim();
@@ -31,26 +47,49 @@ function extractJsonText(raw = '') {
         return fenced[1].trim();
     }
 
-    const firstBrace = text.indexOf('{');
-    const lastBrace = text.lastIndexOf('}');
-    if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
-        return text.slice(firstBrace, lastBrace + 1);
+    const stripped = stripCodeFence(text);
+    if (stripped.startsWith('{') || stripped.startsWith('[')) {
+        return stripped;
     }
 
-    return text;
+    const firstBrace = stripped.indexOf('{');
+    const lastBrace = stripped.lastIndexOf('}');
+    if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+        return stripped.slice(firstBrace, lastBrace + 1);
+    }
+
+    return stripped;
 }
 
 function parseDraftResponse(content = '') {
-    const jsonText = extractJsonText(content);
-    if (!jsonText) {
+    const candidates = [];
+    const primary = extractJsonText(content);
+    if (primary) candidates.push(primary);
+
+    const stripped = stripCodeFence(content);
+    if (stripped && stripped !== primary) {
+        candidates.push(stripped);
+    }
+
+    const rawText = String(content || '').trim();
+    if (rawText && rawText !== primary && rawText !== stripped) {
+        candidates.push(rawText);
+    }
+
+    if (!candidates.length) {
         throw new Error('AI 未返回有效角色卡草稿 JSON。');
     }
 
-    try {
-        return JSON.parse(jsonText);
-    } catch (error) {
-        throw new Error(`角色卡草稿 JSON 解析失败：${error.message}`);
+    let lastError = null;
+    for (const candidate of candidates) {
+        try {
+            return JSON.parse(candidate);
+        } catch (error) {
+            lastError = error;
+        }
     }
+
+    throw new Error(`角色卡草稿 JSON 解析失败：${lastError?.message || '未知错误'}`);
 }
 
 function applyCardFieldsToTemplate(template, card = {}) {
@@ -73,7 +112,12 @@ function applyCardFieldsToTemplate(template, card = {}) {
     return template;
 }
 
-async function requestDraftFromModel({ apiSettings, userPrompt, temperature = 0.8 }) {
+async function requestContentFromModel({
+    apiSettings,
+    userPrompt,
+    temperature = 0.8,
+    systemPrompt = buildCharacterAICreateSystemPrompt(),
+}) {
     const response = await fetch(`${apiSettings.url}/chat/completions`, {
         method: 'POST',
         headers: {
@@ -84,7 +128,7 @@ async function requestDraftFromModel({ apiSettings, userPrompt, temperature = 0.
             model: apiSettings.model,
             temperature,
             messages: [
-                { role: 'system', content: buildCharacterAICreateSystemPrompt() },
+                { role: 'system', content: systemPrompt },
                 { role: 'user', content: userPrompt },
             ],
         }),
@@ -96,8 +140,40 @@ async function requestDraftFromModel({ apiSettings, userPrompt, temperature = 0.
     }
 
     const data = await response.json();
-    const content = data?.choices?.[0]?.message?.content || '';
-    return parseDraftResponse(content);
+    return data?.choices?.[0]?.message?.content || '';
+}
+
+async function requestDraftFromModel({
+    apiSettings,
+    userPrompt,
+    temperature = 0.8,
+    schemaHint = '',
+}) {
+    const content = await requestContentFromModel({
+        apiSettings,
+        userPrompt,
+        temperature,
+    });
+
+    try {
+        return parseDraftResponse(content);
+    } catch (parseError) {
+        const repairedContent = await requestContentFromModel({
+            apiSettings,
+            temperature: 0.1,
+            systemPrompt: JSON_REPAIR_SYSTEM_PROMPT,
+            userPrompt: buildCharacterAIJsonRepairUserPrompt({
+                rawText: content,
+                schemaHint,
+            }),
+        });
+
+        try {
+            return parseDraftResponse(repairedContent);
+        } catch (repairError) {
+            throw new Error(`${parseError.message}；JSON修复失败：${repairError.message}`);
+        }
+    }
 }
 
 function parseEntryCompletionResponse(raw = {}) {
@@ -137,6 +213,7 @@ async function retryFillWorldbookEntryContent({
             entryIndex,
         }),
         temperature: 0.75,
+        schemaHint: '{"ct":"string","sm":"string(optional)"}',
     });
 
     return parseEntryCompletionResponse(raw);
@@ -192,6 +269,7 @@ export function useCharacterAICreation({ apiSettings, openErrorModal, showOperat
                     apiSettings: apiSettings.value,
                     userPrompt: buildCharacterAICreateStructureUserPrompt(inputValidation.normalized),
                     temperature: 0.75,
+                    schemaHint: 'sillytavern.character.ai.draft.v1',
                 });
 
                 const structureValidation = validateCharacterDraft(structureRawDraft, {
@@ -211,6 +289,7 @@ export function useCharacterAICreation({ apiSettings, openErrorModal, showOperat
                         apiSettings: apiSettings.value,
                         userPrompt: buildCharacterAICreateExpandUserPrompt(inputValidation.normalized, structureValidation.normalized),
                         temperature: 0.8,
+                        schemaHint: 'sillytavern.character.ai.draft.v1',
                     });
 
                     const expandedRelaxedValidation = validateCharacterDraft(expandedRawDraft, {
@@ -281,6 +360,7 @@ export function useCharacterAICreation({ apiSettings, openErrorModal, showOperat
                     apiSettings: apiSettings.value,
                     userPrompt: buildCharacterAICreateUserPrompt(inputValidation.normalized),
                     temperature: 0.8,
+                    schemaHint: 'sillytavern.character.ai.draft.v1',
                 });
 
                 validation = validateCharacterDraft(rawDraft, {
