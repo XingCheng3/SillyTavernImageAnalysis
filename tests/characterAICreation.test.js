@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict';
 import {
     buildWorldBookEntryCompletionUserPrompt,
+    getCharacterAIDraftJsonSchema,
     getCharacterDraftSchemaName,
+    getWorldBookEntryCompletionJsonSchema,
 } from '../src/utils/characterAICreationPrompt.js';
 import {
     normalizeCharacterDraft,
@@ -193,6 +195,25 @@ function testEntryRetryPromptBuild() {
     assert.ok(parsed.outputSchema.ct);
 }
 
+function testStructuredOutputSchemas() {
+    const characterSchema = getCharacterAIDraftJsonSchema();
+    assert.equal(characterSchema.type, 'object');
+    assert.equal(characterSchema.additionalProperties, false);
+    assert.ok(characterSchema.required.includes('schema'));
+    assert.ok(characterSchema.required.includes('card'));
+    assert.ok(characterSchema.required.includes('worldbook'));
+    assert.equal(characterSchema.properties.worldbook.properties.entries.minItems, 1);
+
+    characterSchema.properties.card.required.push('__mutated__');
+    const freshCharacterSchema = getCharacterAIDraftJsonSchema();
+    assert.equal(freshCharacterSchema.properties.card.required.includes('__mutated__'), false);
+
+    const completionSchema = getWorldBookEntryCompletionJsonSchema();
+    assert.equal(completionSchema.type, 'object');
+    assert.equal(completionSchema.additionalProperties, false);
+    assert.ok(completionSchema.required.includes('ct'));
+}
+
 function testRetryFailureHelpers() {
     const errors = [
         { code: 'ENTRY_CONTENT_REQUIRED', path: 'worldbook.entries[1].content', message: '条目内容不能为空' },
@@ -239,6 +260,9 @@ function runAllTests() {
 
     testEntryRetryPromptBuild();
     console.log('✓ 阶段2单条补全提示词结构正确');
+
+    testStructuredOutputSchemas();
+    console.log('✓ Structured Output JSON Schema 约束正确');
 
     testRetryFailureHelpers();
     console.log('✓ 补全失败聚合与恢复判断正确');

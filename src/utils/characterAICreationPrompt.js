@@ -80,6 +80,155 @@ function getSimpleOutputExample() {
     };
 }
 
+const CHARACTER_DRAFT_JSON_SCHEMA = {
+    type: 'object',
+    additionalProperties: false,
+    required: ['schema', 'card', 'worldbook'],
+    properties: {
+        schema: {
+            type: 'string',
+            enum: [CHARACTER_DRAFT_SCHEMA],
+        },
+        card: {
+            type: 'object',
+            additionalProperties: false,
+            required: [
+                'name',
+                'description',
+                'personality',
+                'scenario',
+                'first_message',
+                'alternate_greetings',
+                'creator_notes',
+                'system_prompt',
+                'post_history_instructions',
+                'message_example',
+            ],
+            properties: {
+                name: { type: 'string' },
+                description: { type: 'string' },
+                personality: { type: 'string' },
+                scenario: { type: 'string' },
+                first_message: { type: 'string' },
+                alternate_greetings: {
+                    type: 'array',
+                    items: { type: 'string' },
+                },
+                creator_notes: { type: 'string' },
+                system_prompt: { type: 'string' },
+                post_history_instructions: { type: 'string' },
+                message_example: { type: 'string' },
+            },
+        },
+        worldbook: {
+            type: 'object',
+            additionalProperties: false,
+            required: ['schema', 'book', 'generation', 'entries', 'openings'],
+            properties: {
+                schema: {
+                    type: 'string',
+                    enum: ['sillytavern.worldbook.ai.draft.v1'],
+                },
+                book: {
+                    type: 'object',
+                    additionalProperties: false,
+                    required: ['name', 'description', 'genre', 'style'],
+                    properties: {
+                        name: { type: 'string' },
+                        description: { type: 'string' },
+                        genre: { type: 'string' },
+                        style: { type: 'string' },
+                    },
+                },
+                generation: {
+                    type: 'object',
+                    additionalProperties: false,
+                    required: ['language', 'targetEntryCount', 'openingCount', 'notes'],
+                    properties: {
+                        language: { type: 'string' },
+                        targetEntryCount: { type: 'integer', minimum: 1 },
+                        openingCount: { type: 'integer', minimum: 0 },
+                        notes: { type: 'string' },
+                    },
+                },
+                entries: {
+                    type: 'array',
+                    minItems: 1,
+                    items: {
+                        type: 'object',
+                        additionalProperties: false,
+                        required: ['id', 'c', 'k', 'lt', 'io', 'dp', 'ps', 'en', 'sm', 'ct'],
+                        properties: {
+                            id: { type: 'string' },
+                            c: { type: 'string' },
+                            k: {
+                                type: 'array',
+                                items: { type: 'string' },
+                            },
+                            lt: {
+                                type: 'string',
+                                enum: ['blue', 'green'],
+                            },
+                            io: { type: 'integer' },
+                            dp: { type: 'integer', minimum: 0 },
+                            ps: {
+                                type: 'string',
+                                enum: ['b', 'a'],
+                            },
+                            en: { type: 'boolean' },
+                            sm: { type: 'string' },
+                            ct: { type: 'string' },
+                        },
+                    },
+                },
+                openings: {
+                    type: 'array',
+                    items: {
+                        type: 'object',
+                        additionalProperties: false,
+                        required: ['id', 't', 'tx', 'en', 'dis'],
+                        properties: {
+                            id: { type: 'string' },
+                            t: { type: 'string' },
+                            tx: { type: 'string' },
+                            en: {
+                                type: 'array',
+                                items: { type: 'string' },
+                            },
+                            dis: {
+                                type: 'array',
+                                items: { type: 'string' },
+                            },
+                        },
+                    },
+                },
+            },
+        },
+    },
+};
+
+const WORLDBOOK_ENTRY_COMPLETION_JSON_SCHEMA = {
+    type: 'object',
+    additionalProperties: false,
+    required: ['ct'],
+    properties: {
+        ct: { type: 'string', minLength: 1 },
+        sm: { type: 'string' },
+    },
+};
+
+function cloneSchema(schema = {}) {
+    return JSON.parse(JSON.stringify(schema));
+}
+
+export function getCharacterAIDraftJsonSchema() {
+    return cloneSchema(CHARACTER_DRAFT_JSON_SCHEMA);
+}
+
+export function getWorldBookEntryCompletionJsonSchema() {
+    return cloneSchema(WORLDBOOK_ENTRY_COMPLETION_JSON_SCHEMA);
+}
+
 function buildBasePayload(input = {}) {
     return {
         language: input.language || 'zh-CN',

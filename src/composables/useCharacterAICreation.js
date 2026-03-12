@@ -8,6 +8,8 @@ import {
     buildCharacterAIJsonRepairUserPrompt,
     buildCharacterAISchemaRepairUserPrompt,
     buildWorldBookEntryCompletionUserPrompt,
+    getCharacterAIDraftJsonSchema,
+    getWorldBookEntryCompletionJsonSchema,
 } from '@/utils/characterAICreationPrompt';
 import {
     CHARACTER_CREATE_GENERATION_MODES,
@@ -24,6 +26,17 @@ const JSON_REPAIR_SYSTEM_PROMPT = `你是严格 JSON 修复器。
 只输出合法 JSON，不要 markdown，不要解释。`;
 
 const ENTRY_RETRY_CONCURRENCY = 3;
+const NETWORK_RETRY_MAX_ATTEMPTS = 3;
+const NETWORK_RETRY_BASE_DELAY_MS = 800;
+
+const RESPONSE_FORMAT_MODES = Object.freeze({
+    JSON_SCHEMA: 'json_schema',
+    JSON_OBJECT: 'json_object',
+    NONE: 'none',
+});
+
+const RETRYABLE_HTTP_STATUS = new Set([408, 429, 500, 502, 503, 504]);
+const responseFormatModeCache = new Map();
 
 function stripCodeFence(raw = '') {
     let text = String(raw || '').trim();
@@ -121,9 +134,125 @@ function shouldFallbackWithoutResponseFormat(status, bodyText = '') {
     const text = String(bodyText || '').toLowerCase();
     return text.includes('response_format')
         || text.includes('json schema')
+        || text.includes('json_schema')
         || text.includes('json_object')
         || text.includes('unsupported')
         || text.includes('not support');
+}
+
+function sleep(ms = 0) {
+    return new Promise((resolve) => setTimeout(resolve, Math.max(0, ms)));
+}
+
+function getResponseFormatCacheKey(apiSettings = {}) {
+    return `${String(apiSettings?.url || '').trim()}|${String(apiSettings?.model || '').trim()}`;
+}
+
+function getInitialResponseFormatMode({ apiSettings, jsonSchema }) {
+    const cacheKey = getResponseFormatCacheKey(apiSettings);
+    const cached = responseFormatModeCache.get(cacheKey);
+    if (cached) return cached;
+
+    if (jsonSchema?.schema) {
+        return RESPONSE_FORMAT_MODES.JSON_SCHEMA;
+    }
+
+    return RESPONSE_FORMAT_MODES.JSON_OBJECT;
+}
+
+function getFallbackResponseFormatMode(mode = RESPONSE_FORMAT_MODES.NONE, hasJsonSchema = false) {
+    if (mode === RESPONSE_FORMAT_MODES.JSON_SCHEMA) {
+        return RESPONSE_FORMAT_MODES.JSON_OBJECT;
+    }
+
+    if (mode === RESPONSE_FORMAT_MODES.JSON_OBJECT) {
+        return RESPONSE_FORMAT_MODES.NONE;
+    }
+
+    if (mode === RESPONSE_FORMAT_MODES.NONE && hasJsonSchema) {
+        return null;
+    }
+
+    return null;
+}
+
+function buildResponseFormat(mode = RESPONSE_FORMAT_MODES.NONE, jsonSchema = null) {
+    if (mode === RESPONSE_FORMAT_MODES.JSON_SCHEMA && jsonSchema?.schema) {
+        return {
+            type: 'json_schema',
+            json_schema: {
+                name: jsonSchema.name || 'ai_structured_output',
+                strict: true,
+                schema: jsonSchema.schema,
+            },
+        };
+    }
+
+    if (mode === RESPONSE_FORMAT_MODES.JSON_OBJECT) {
+        return { type: 'json_object' };
+    }
+
+    return undefined;
+}
+
+function parseRetryAfterMs(retryAfterHeader = '') {
+    const value = String(retryAfterHeader || '').trim();
+    if (!value) return 0;
+
+    const seconds = Number(value);
+    if (Number.isFinite(seconds) && seconds > 0) {
+        return Math.max(0, Math.round(seconds * 1000));
+    }
+
+    const at = Date.parse(value);
+    if (Number.isFinite(at)) {
+        return Math.max(0, at - Date.now());
+    }
+
+    return 0;
+}
+
+function getRetryDelayMs(attempt = 0, retryAfterMs = 0) {
+    if (retryAfterMs > 0) {
+        return retryAfterMs;
+    }
+
+    const exponential = NETWORK_RETRY_BASE_DELAY_MS * Math.pow(2, attempt);
+    const jitter = Math.floor(Math.random() * 200);
+    return exponential + jitter;
+}
+
+function extractMessageText(choice = {}) {
+    const refusal = String(
+        choice?.message?.refusal
+        ?? choice?.message?.content?.find?.(part => part?.type === 'refusal')?.refusal
+        ?? ''
+    ).trim();
+
+    if (refusal) {
+        throw new Error(`模型拒绝输出：${refusal}`);
+    }
+
+    const content = choice?.message?.content;
+    if (typeof content === 'string') {
+        return content;
+    }
+
+    if (Array.isArray(content)) {
+        const text = content
+            .map((part) => {
+                if (typeof part === 'string') return part;
+                if (part?.type === 'text') return part.text || '';
+                if (typeof part?.text === 'string') return part.text;
+                return '';
+            })
+            .join('')
+            .trim();
+
+        return text;
+    }
+
+    return '';
 }
 
 async function requestContentFromModel({
@@ -131,51 +260,104 @@ async function requestContentFromModel({
     userPrompt,
     temperature = 0.8,
     maxTokens = 6000,
-    strictJson = true,
     systemPrompt = buildCharacterAICreateSystemPrompt(),
+    responseFormatMode,
+    jsonSchema,
 }) {
-    const payload = {
-        model: apiSettings.model,
-        temperature,
-        max_tokens: maxTokens,
-        messages: [
-            { role: 'system', content: systemPrompt },
-            { role: 'user', content: userPrompt },
-        ],
-    };
+    const hasJsonSchema = Boolean(jsonSchema?.schema);
+    const cacheKey = getResponseFormatCacheKey(apiSettings);
+    let currentMode = responseFormatMode || getInitialResponseFormatMode({ apiSettings, jsonSchema });
 
-    if (strictJson) {
-        payload.response_format = { type: 'json_object' };
-    }
+    while (currentMode) {
+        let switchedMode = false;
 
-    const response = await fetch(`${apiSettings.url}/chat/completions`, {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${apiSettings.key}`,
-        },
-        body: JSON.stringify(payload),
-    });
-
-    if (!response.ok) {
-        const text = await response.text();
-
-        if (strictJson && shouldFallbackWithoutResponseFormat(response.status, text)) {
-            return requestContentFromModel({
-                apiSettings,
-                userPrompt,
+        for (let attempt = 0; attempt < NETWORK_RETRY_MAX_ATTEMPTS; attempt += 1) {
+            const payload = {
+                model: apiSettings.model,
                 temperature,
-                maxTokens,
-                strictJson: false,
-                systemPrompt,
-            });
+                max_tokens: maxTokens,
+                messages: [
+                    { role: 'system', content: systemPrompt },
+                    { role: 'user', content: userPrompt },
+                ],
+            };
+
+            const responseFormat = buildResponseFormat(currentMode, jsonSchema);
+            if (responseFormat) {
+                payload.response_format = responseFormat;
+            }
+
+            let response;
+            try {
+                response = await fetch(`${apiSettings.url}/chat/completions`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${apiSettings.key}`,
+                    },
+                    body: JSON.stringify(payload),
+                });
+            } catch (networkError) {
+                const isLastAttempt = attempt === NETWORK_RETRY_MAX_ATTEMPTS - 1;
+                if (isLastAttempt) {
+                    throw new Error(`创建请求失败（网络异常）：${networkError?.message || '未知错误'}`);
+                }
+
+                await sleep(getRetryDelayMs(attempt));
+                continue;
+            }
+
+            if (!response.ok) {
+                const text = await response.text();
+                const retryAfterMs = parseRetryAfterMs(response.headers?.get?.('retry-after'));
+                const isRetryableStatus = RETRYABLE_HTTP_STATUS.has(response.status);
+                const isFormatFallback = currentMode !== RESPONSE_FORMAT_MODES.NONE
+                    && shouldFallbackWithoutResponseFormat(response.status, text);
+
+                if (isFormatFallback) {
+                    const fallbackMode = getFallbackResponseFormatMode(currentMode, hasJsonSchema);
+                    if (fallbackMode) {
+                        currentMode = fallbackMode;
+                        switchedMode = true;
+                        break;
+                    }
+                }
+
+                const isLastAttempt = attempt === NETWORK_RETRY_MAX_ATTEMPTS - 1;
+                if (!isLastAttempt && isRetryableStatus) {
+                    await sleep(getRetryDelayMs(attempt, retryAfterMs));
+                    continue;
+                }
+
+                throw new Error(`创建请求失败（HTTP ${response.status}）：${text || response.statusText}`);
+            }
+
+            const data = await response.json();
+            const choice = data?.choices?.[0] || {};
+            const content = extractMessageText(choice);
+
+            if (!String(content || '').trim()) {
+                const finishReason = String(choice?.finish_reason || '').trim();
+                if (finishReason === 'length') {
+                    throw new Error('模型输出被截断（finish_reason=length），请提高 max_tokens 后重试。');
+                }
+                throw new Error('模型未返回有效文本内容。');
+            }
+
+            responseFormatModeCache.set(cacheKey, currentMode);
+            return content;
         }
 
-        throw new Error(`创建请求失败（HTTP ${response.status}）：${text || response.statusText}`);
+        if (switchedMode) {
+            continue;
+        }
+
+        const fallbackMode = getFallbackResponseFormatMode(currentMode, hasJsonSchema);
+        if (!fallbackMode) break;
+        currentMode = fallbackMode;
     }
 
-    const data = await response.json();
-    return data?.choices?.[0]?.message?.content || '';
+    throw new Error('创建请求失败：未能从模型获取有效响应内容。');
 }
 
 async function requestDraftFromModel({
@@ -185,6 +367,7 @@ async function requestDraftFromModel({
     maxTokens = 6000,
     schemaHint = '',
     systemPrompt = buildCharacterAICreateSystemPrompt(),
+    jsonSchema = null,
 }) {
     const content = await requestContentFromModel({
         apiSettings,
@@ -192,6 +375,7 @@ async function requestDraftFromModel({
         temperature,
         maxTokens,
         systemPrompt,
+        jsonSchema,
     });
 
     try {
@@ -206,6 +390,7 @@ async function requestDraftFromModel({
                 rawText: content,
                 schemaHint,
             }),
+            jsonSchema,
         });
 
         try {
@@ -255,6 +440,10 @@ async function retryFillWorldbookEntryContent({
         temperature: 0.65,
         maxTokens: 1600,
         schemaHint: '{"ct":"string","sm":"string(optional)"}',
+        jsonSchema: {
+            name: 'worldbook_entry_completion',
+            schema: getWorldBookEntryCompletionJsonSchema(),
+        },
     });
 
     return parseEntryCompletionResponse(raw);
@@ -346,6 +535,10 @@ export function useCharacterAICreation({ apiSettings, openErrorModal, showOperat
                     temperature: 0.45,
                     maxTokens: 7000,
                     schemaHint: 'sillytavern.character.ai.draft.v1',
+                    jsonSchema: {
+                        name: 'character_draft',
+                        schema: getCharacterAIDraftJsonSchema(),
+                    },
                 });
 
                 const structureValidation = validateCharacterDraft(structureRawDraft, {
@@ -367,6 +560,10 @@ export function useCharacterAICreation({ apiSettings, openErrorModal, showOperat
                         temperature: 0.65,
                         maxTokens: 7000,
                         schemaHint: 'sillytavern.character.ai.draft.v1',
+                        jsonSchema: {
+                            name: 'character_draft',
+                            schema: getCharacterAIDraftJsonSchema(),
+                        },
                     });
 
                     const expandedRelaxedValidation = validateCharacterDraft(expandedRawDraft, {
@@ -463,6 +660,10 @@ export function useCharacterAICreation({ apiSettings, openErrorModal, showOperat
                     temperature: 0.65,
                     maxTokens: 7000,
                     schemaHint: 'sillytavern.character.ai.draft.v1',
+                    jsonSchema: {
+                        name: 'character_draft',
+                        schema: getCharacterAIDraftJsonSchema(),
+                    },
                 });
 
                 validation = validateCharacterDraft(rawDraft, {
@@ -484,6 +685,10 @@ export function useCharacterAICreation({ apiSettings, openErrorModal, showOperat
                         temperature: 0.2,
                         maxTokens: 7000,
                         schemaHint: 'sillytavern.character.ai.draft.v1',
+                        jsonSchema: {
+                            name: 'character_draft',
+                            schema: getCharacterAIDraftJsonSchema(),
+                        },
                     });
 
                     const repairedValidation = validateCharacterDraft(repairedRawDraft, {
