@@ -112,32 +112,62 @@ function applyCardFieldsToTemplate(template, card = {}) {
     return template;
 }
 
+function shouldFallbackWithoutResponseFormat(status, bodyText = '') {
+    if (![400, 404, 415, 422].includes(status)) return false;
+
+    const text = String(bodyText || '').toLowerCase();
+    return text.includes('response_format')
+        || text.includes('json schema')
+        || text.includes('json_object')
+        || text.includes('unsupported')
+        || text.includes('not support');
+}
+
 async function requestContentFromModel({
     apiSettings,
     userPrompt,
     temperature = 0.8,
     maxTokens = 6000,
+    strictJson = true,
     systemPrompt = buildCharacterAICreateSystemPrompt(),
 }) {
+    const payload = {
+        model: apiSettings.model,
+        temperature,
+        max_tokens: maxTokens,
+        messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: userPrompt },
+        ],
+    };
+
+    if (strictJson) {
+        payload.response_format = { type: 'json_object' };
+    }
+
     const response = await fetch(`${apiSettings.url}/chat/completions`, {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
             'Authorization': `Bearer ${apiSettings.key}`,
         },
-        body: JSON.stringify({
-            model: apiSettings.model,
-            temperature,
-            max_tokens: maxTokens,
-            messages: [
-                { role: 'system', content: systemPrompt },
-                { role: 'user', content: userPrompt },
-            ],
-        }),
+        body: JSON.stringify(payload),
     });
 
     if (!response.ok) {
         const text = await response.text();
+
+        if (strictJson && shouldFallbackWithoutResponseFormat(response.status, text)) {
+            return requestContentFromModel({
+                apiSettings,
+                userPrompt,
+                temperature,
+                maxTokens,
+                strictJson: false,
+                systemPrompt,
+            });
+        }
+
         throw new Error(`创建请求失败（HTTP ${response.status}）：${text || response.statusText}`);
     }
 
