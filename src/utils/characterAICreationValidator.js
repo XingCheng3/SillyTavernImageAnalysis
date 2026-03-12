@@ -68,20 +68,26 @@ export function validateCharacterCreateInput(input = {}) {
 
 export function normalizeCharacterDraft(raw = {}) {
     const schema = normalizeString(raw.schema) || getCharacterDraftSchemaName();
-    const card = raw.card || {};
-    const worldbook = raw.worldbook || raw?.card?.worldbook || {};
+    const card = raw.card || raw.character || {};
+    const worldbook = raw.worldbook
+        || raw.character_book
+        || raw?.card?.worldbook
+        || raw?.card?.character_book
+        || raw?.character?.worldbook
+        || raw?.character?.character_book
+        || {};
 
     const normalizedCard = {
         name: normalizeString(card.name),
         description: normalizeString(card.description),
         personality: normalizeString(card.personality),
         scenario: normalizeString(card.scenario),
-        first_message: normalizeString(card.first_message),
-        alternate_greetings: normalizeGreetings(card.alternate_greetings),
-        creator_notes: normalizeString(card.creator_notes),
-        system_prompt: normalizeString(card.system_prompt),
-        post_history_instructions: normalizeString(card.post_history_instructions),
-        message_example: normalizeString(card.message_example),
+        first_message: normalizeString(card.first_message ?? card.first_mes),
+        alternate_greetings: normalizeGreetings(card.alternate_greetings ?? card.alternateGreetings),
+        creator_notes: normalizeString(card.creator_notes ?? card.creatorcomment ?? card.author_note),
+        system_prompt: normalizeString(card.system_prompt ?? card.systemPrompt),
+        post_history_instructions: normalizeString(card.post_history_instructions ?? card.postHistoryInstructions),
+        message_example: normalizeString(card.message_example ?? card.mes_example),
     };
 
     const worldbookDraft = createWorldBookGenerationDraft(worldbook);

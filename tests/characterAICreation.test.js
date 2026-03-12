@@ -159,6 +159,45 @@ function testNestedWorldbookFallback() {
     assert.equal(result.normalized.worldbookDraft.entries[0].id, 'E01');
 }
 
+function testCharacterBookFallbackAndObjectEntries() {
+    const draft = buildValidDraft();
+    draft.character_book = {
+        ...draft.worldbook,
+        entries: {
+            E01: draft.worldbook.entries[0],
+            E02: draft.worldbook.entries[1],
+            E03: draft.worldbook.entries[2],
+        },
+    };
+    delete draft.worldbook;
+
+    const normalized = normalizeCharacterDraft(draft);
+    assert.equal(normalized.worldbookDraft.entries.length, 3);
+    assert.equal(normalized.worldbookDraft.entries[1].id, 'E02');
+
+    const result = validateCharacterDraft(draft);
+    assert.equal(result.ok, true);
+    assert.equal(result.normalized.worldbookDraft.entries[2].id, 'E03');
+}
+
+function testLegacyCardFieldFallback() {
+    const legacy = buildValidDraft();
+    legacy.card = {
+        ...legacy.card,
+        first_mes: legacy.card.first_message,
+        mes_example: legacy.card.message_example,
+    };
+    delete legacy.card.first_message;
+    delete legacy.card.message_example;
+
+    const normalized = normalizeCharacterDraft(legacy);
+    assert.equal(normalized.card.first_message.includes('裂界'), true);
+    assert.equal(normalized.card.message_example.includes('{{user}}'), true);
+
+    const result = validateCharacterDraft(legacy);
+    assert.equal(result.ok, true);
+}
+
 function testTwoStepStructureValidationMode() {
     const structureDraft = buildValidDraft();
     structureDraft.worldbook.entries.forEach((entry) => {
@@ -254,6 +293,12 @@ function runAllTests() {
 
     testNestedWorldbookFallback();
     console.log('✓ worldbook 错层级兼容恢复正确');
+
+    testCharacterBookFallbackAndObjectEntries();
+    console.log('✓ character_book 兼容与对象条目恢复正确');
+
+    testLegacyCardFieldFallback();
+    console.log('✓ legacy card 字段兼容恢复正确');
 
     testTwoStepStructureValidationMode();
     console.log('✓ 两阶段结构草稿校验模式正确');

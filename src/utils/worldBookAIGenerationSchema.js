@@ -103,9 +103,19 @@ export function expandCompactOpenings(openings = []) {
     }));
 }
 
+function normalizeCollection(raw) {
+    if (Array.isArray(raw)) return raw;
+    if (raw && typeof raw === 'object') {
+        return Object.values(raw);
+    }
+    return [];
+}
+
 export function createWorldBookGenerationDraft(payload = {}) {
-    const entries = Array.isArray(payload.entries) ? payload.entries : [];
-    const openings = Array.isArray(payload.openings) ? payload.openings : [];
+    const rawEntries = payload.entries ?? payload.book_entries ?? payload.bookEntries;
+    const rawOpenings = payload.openings ?? payload.opening_branches ?? payload.openingBranches;
+    const entries = normalizeCollection(rawEntries);
+    const openings = normalizeCollection(rawOpenings);
 
     return {
         schema: WORLD_BOOK_DRAFT_SCHEMA,
