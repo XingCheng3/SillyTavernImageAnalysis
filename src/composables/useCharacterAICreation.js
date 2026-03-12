@@ -116,6 +116,7 @@ async function requestContentFromModel({
     apiSettings,
     userPrompt,
     temperature = 0.8,
+    maxTokens = 6000,
     systemPrompt = buildCharacterAICreateSystemPrompt(),
 }) {
     const response = await fetch(`${apiSettings.url}/chat/completions`, {
@@ -127,6 +128,7 @@ async function requestContentFromModel({
         body: JSON.stringify({
             model: apiSettings.model,
             temperature,
+            max_tokens: maxTokens,
             messages: [
                 { role: 'system', content: systemPrompt },
                 { role: 'user', content: userPrompt },
@@ -147,12 +149,14 @@ async function requestDraftFromModel({
     apiSettings,
     userPrompt,
     temperature = 0.8,
+    maxTokens = 6000,
     schemaHint = '',
 }) {
     const content = await requestContentFromModel({
         apiSettings,
         userPrompt,
         temperature,
+        maxTokens,
     });
 
     try {
@@ -160,7 +164,8 @@ async function requestDraftFromModel({
     } catch (parseError) {
         const repairedContent = await requestContentFromModel({
             apiSettings,
-            temperature: 0.1,
+            temperature: 0,
+            maxTokens,
             systemPrompt: JSON_REPAIR_SYSTEM_PROMPT,
             userPrompt: buildCharacterAIJsonRepairUserPrompt({
                 rawText: content,
@@ -212,7 +217,8 @@ async function retryFillWorldbookEntryContent({
             entry,
             entryIndex,
         }),
-        temperature: 0.75,
+        temperature: 0.65,
+        maxTokens: 1600,
         schemaHint: '{"ct":"string","sm":"string(optional)"}',
     });
 
@@ -268,7 +274,8 @@ export function useCharacterAICreation({ apiSettings, openErrorModal, showOperat
                 const structureRawDraft = await requestDraftFromModel({
                     apiSettings: apiSettings.value,
                     userPrompt: buildCharacterAICreateStructureUserPrompt(inputValidation.normalized),
-                    temperature: 0.75,
+                    temperature: 0.45,
+                    maxTokens: 7000,
                     schemaHint: 'sillytavern.character.ai.draft.v1',
                 });
 
@@ -288,7 +295,8 @@ export function useCharacterAICreation({ apiSettings, openErrorModal, showOperat
                     const expandedRawDraft = await requestDraftFromModel({
                         apiSettings: apiSettings.value,
                         userPrompt: buildCharacterAICreateExpandUserPrompt(inputValidation.normalized, structureValidation.normalized),
-                        temperature: 0.8,
+                        temperature: 0.65,
+                        maxTokens: 7000,
                         schemaHint: 'sillytavern.character.ai.draft.v1',
                     });
 
@@ -359,7 +367,8 @@ export function useCharacterAICreation({ apiSettings, openErrorModal, showOperat
                 const rawDraft = await requestDraftFromModel({
                     apiSettings: apiSettings.value,
                     userPrompt: buildCharacterAICreateUserPrompt(inputValidation.normalized),
-                    temperature: 0.8,
+                    temperature: 0.65,
+                    maxTokens: 7000,
                     schemaHint: 'sillytavern.character.ai.draft.v1',
                 });
 

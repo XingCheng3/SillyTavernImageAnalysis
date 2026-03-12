@@ -12,7 +12,7 @@ const SYSTEM_PROMPT = `你是“角色卡架构师”。
 4) worldbook 必须使用紧凑 schema（与世界书 AI 代写一致），蓝绿灯语义正确：
    - blue = 关键词触发
    - green = 直接载入上下文
-5) 条目内容必须实用、可用于剧情推进，避免空洞设定。`;
+5) 当 stage=structure 时，worldbook.entries[*].ct 允许为空或占位文本；当 stage=single/expand 时，条目内容必须实用、可用于剧情推进，避免空洞设定。`;
 
 export function getCharacterDraftSchemaName() {
     return CHARACTER_DRAFT_SCHEMA;
@@ -32,6 +32,11 @@ function buildBasePayload(input = {}) {
         targetEntryCount: input.targetEntryCount || 16,
         openingCount: input.openingCount || 3,
         notes: input.notes || '',
+        outputRules: [
+            '只输出 JSON 本体，禁止 ```json 代码块',
+            '禁止输出解释性文字或注释',
+            '输出必须可被 JSON.parse 直接解析',
+        ],
         outputSchema: {
             schema: CHARACTER_DRAFT_SCHEMA,
             card: {
