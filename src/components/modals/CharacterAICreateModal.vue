@@ -95,6 +95,20 @@
                             <li v-for="(warning, idx) in warnings" :key="idx">{{ warning.message }}</li>
                         </ul>
                     </div>
+
+                    <div class="retry-failures" v-if="retryFailures?.length">
+                        <div class="retry-header">
+                            <h4>待补全失败条目（{{ retryFailures.length }}）</h4>
+                            <button class="small-button" @click="$emit('retry-failed')" :disabled="isGenerating">重试失败条目</button>
+                        </div>
+                        <ul>
+                            <li v-for="item in retryFailures" :key="item.entryId">
+                                <strong>{{ item.entryId }}</strong>
+                                <span v-if="item.entryTitle">（{{ item.entryTitle }}）</span>
+                                ：{{ item.message }}
+                            </li>
+                        </ul>
+                    </div>
                 </div>
             </div>
 
@@ -104,7 +118,7 @@
                 <button class="action-button" @click="$emit('generate')" :disabled="isGenerating || !form.corePrompt?.trim()">
                     {{ isGenerating ? '生成中...' : '生成角色草稿' }}
                 </button>
-                <button class="action-button" @click="$emit('apply')" :disabled="!draft || isGenerating">应用并进入编辑</button>
+                <button class="action-button" @click="$emit('apply')" :disabled="!draft || isGenerating || retryFailures?.length">应用并进入编辑</button>
             </div>
         </div>
     </div>
@@ -118,9 +132,10 @@ defineProps({
     form: { type: Object, required: true },
     draft: { type: Object, default: null },
     warnings: { type: Array, default: () => [] },
+    retryFailures: { type: Array, default: () => [] },
 });
 
-defineEmits(['close', 'generate', 'apply']);
+defineEmits(['close', 'generate', 'retry-failed', 'apply']);
 </script>
 
 <style scoped>
@@ -238,6 +253,35 @@ defineEmits(['close', 'generate', 'apply']);
     color: #78350f;
     font-size: 12px;
     line-height: 1.6;
+}
+
+.retry-failures {
+    margin-top: 10px;
+    padding: 10px;
+    border: 1px solid #fecaca;
+    background: #fef2f2;
+    border-radius: 10px;
+}
+
+.retry-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+}
+
+.retry-header h4 {
+    margin: 0;
+    font-size: 13px;
+    color: #991b1b;
+}
+
+.retry-failures ul {
+    margin: 8px 0 0;
+    padding-left: 18px;
+    font-size: 12px;
+    line-height: 1.6;
+    color: #7f1d1d;
 }
 
 .stage-tip {

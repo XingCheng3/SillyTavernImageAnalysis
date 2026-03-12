@@ -149,8 +149,10 @@
             :form="characterAICreateForm"
             :draft="characterAICreateDraft"
             :warnings="characterAICreateWarnings"
+            :retryFailures="characterAICreateRetryFailures"
             @close="closeCharacterAICreateModal"
             @generate="handleGenerateCharacterAIDraft"
+            @retry-failed="handleRetryCharacterAIFailedEntries"
             @apply="handleApplyCharacterAIDraft"
         />
 
@@ -607,7 +609,9 @@ const {
     generationStageLabel: characterAICreationStageLabel,
     draft: characterAICreateDraft,
     draftWarnings: characterAICreateWarnings,
+    retryFailures: characterAICreateRetryFailures,
     generateDraft: generateCharacterAIDraft,
+    retryFailedEntries: retryCharacterAIDraftFailedEntries,
     buildCharacterTemplateFromDraft,
     clearDraft: clearCharacterAIDraft,
 } = useCharacterAICreation({
@@ -1036,6 +1040,24 @@ const handleGenerateCharacterAIDraft = async () => {
     }
 };
 
+const handleRetryCharacterAIFailedEntries = async () => {
+    if (!characterAICreateRetryFailures.value.length) {
+        showOperationNotice({
+            type: 'warning',
+            title: '当前没有可重试条目',
+            message: '请先生成草稿或检查失败列表。',
+            duration: 3200,
+        });
+        return;
+    }
+
+    try {
+        await retryCharacterAIDraftFailedEntries();
+    } catch {
+        // 错误已在 composable 统一处理
+    }
+};
+
 const handleApplyCharacterAIDraft = () => {
     if (!characterAICreateDraft.value) {
         showOperationNotice({
@@ -1043,6 +1065,16 @@ const handleApplyCharacterAIDraft = () => {
             title: '还没有可应用的角色草稿',
             message: '请先生成角色草稿。',
             duration: 3500,
+        });
+        return;
+    }
+
+    if (characterAICreateRetryFailures.value.length > 0) {
+        showOperationNotice({
+            type: 'warning',
+            title: '仍有未补全条目',
+            message: `请先完成失败条目重试（剩余 ${characterAICreateRetryFailures.value.length} 条）后再应用。`,
+            duration: 4500,
         });
         return;
     }

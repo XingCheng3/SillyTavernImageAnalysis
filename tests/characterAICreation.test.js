@@ -8,6 +8,11 @@ import {
     validateCharacterCreateInput,
     validateCharacterDraft,
 } from '../src/utils/characterAICreationValidator.js';
+import {
+    buildContentRetryFailures,
+    isRecoverableContentOnlyErrors,
+    mergeRetryFailureLists,
+} from '../src/utils/characterAICreationRetry.js';
 
 function testInputValidation() {
     const invalid = validateCharacterCreateInput({
@@ -165,6 +170,32 @@ function testEntryRetryPromptBuild() {
     assert.ok(parsed.outputSchema.ct);
 }
 
+function testRetryFailureHelpers() {
+    const errors = [
+        { code: 'ENTRY_CONTENT_REQUIRED', path: 'worldbook.entries[1].content', message: '条目内容不能为空' },
+        { code: 'ENTRY_CONTENT_REQUIRED', path: 'worldbook.entries[2].content', message: '条目内容不能为空' },
+    ];
+
+    assert.equal(isRecoverableContentOnlyErrors(errors), true);
+
+    const entries = [
+        { id: 'E01', title: 'A' },
+        { id: 'E02', title: 'B' },
+        { id: 'E03', title: 'C' },
+    ];
+
+    const fromValidation = buildContentRetryFailures(errors, entries);
+    assert.equal(fromValidation.length, 2);
+    assert.equal(fromValidation[0].entryId, 'E02');
+
+    const merged = mergeRetryFailureLists(
+        [{ entryId: 'E02', entryTitle: 'B', message: 'HTTP 502' }],
+        fromValidation,
+    );
+    assert.equal(merged.length, 2);
+    assert.ok(merged.some(item => item.entryId === 'E02'));
+}
+
 function runAllTests() {
     console.log('🚀 开始运行角色卡 AI 从0创建测试\n');
 
@@ -179,6 +210,9 @@ function runAllTests() {
 
     testEntryRetryPromptBuild();
     console.log('✓ 阶段2单条补全提示词结构正确');
+
+    testRetryFailureHelpers();
+    console.log('✓ 补全失败聚合与恢复判断正确');
 
     console.log('\n✅ 角色卡 AI 从0创建测试通过');
 }

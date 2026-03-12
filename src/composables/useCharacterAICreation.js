@@ -12,6 +12,11 @@ import {
     validateCharacterCreateInput,
     validateCharacterDraft,
 } from '@/utils/characterAICreationValidator';
+import {
+    buildContentRetryFailures,
+    isRecoverableContentOnlyErrors,
+    mergeRetryFailureLists,
+} from '@/utils/characterAICreationRetry';
 
 function extractJsonText(raw = '') {
     const text = String(raw || '').trim();
@@ -137,11 +142,26 @@ async function retryFillWorldbookEntryContent({
     return parseEntryCompletionResponse(raw);
 }
 
+function buildRetryWarning(failures = []) {
+    if (!failures.length) return null;
+    return {
+        path: 'worldbook.entries',
+        code: 'ENTRY_RETRY_PARTIAL_FAILED',
+        message: `阶段2按条目补全存在失败项：${failures.map(item => item.entryId).join(', ')}`,
+    };
+}
+
+function cloneJson(value) {
+    return JSON.parse(JSON.stringify(value));
+}
+
 export function useCharacterAICreation({ apiSettings, openErrorModal, showOperationNotice }) {
     const isGenerating = ref(false);
     const generationStageLabel = ref('');
     const draft = ref(null);
     const draftWarnings = ref([]);
+    const retryFailures = ref([]);
+    const lastNormalizedInput = ref(null);
 
     const generateDraft = async (input = {}) => {
         const inputValidation = validateCharacterCreateInput(input);
@@ -155,6 +175,8 @@ export function useCharacterAICreation({ apiSettings, openErrorModal, showOperat
 
         isGenerating.value = true;
         generationStageLabel.value = '准备中';
+        retryFailures.value = [];
+        lastNormalizedInput.value = cloneJson(inputValidation.normalized);
 
         try {
             let validation;
@@ -240,6 +262,8 @@ export function useCharacterAICreation({ apiSettings, openErrorModal, showOperat
                         } catch (retryError) {
                             retryStats.failed.push({
                                 entryId: String(targetEntry?.id ?? entryIndex),
+                                entryTitle: targetEntry?.title || targetEntry?.comment || `条目 ${entryIndex + 1}`,
+                                entryIndex,
                                 message: retryError.message,
                             });
                         }
@@ -264,25 +288,60 @@ export function useCharacterAICreation({ apiSettings, openErrorModal, showOperat
                 });
             }
 
+            const retryFailuresFromValidation = buildContentRetryFailures(
+                validation.errors,
+                validation.normalized?.worldbookDraft?.entries || [],
+            );
+            const combinedRetryFailures = mergeRetryFailureLists(retryStats.failed, retryFailuresFromValidation);
+
             if (!validation.ok) {
+                if (isRecoverableContentOnlyErrors(validation.errors)) {
+                    draft.value = validation.normalized;
+                    retryFailures.value = combinedRetryFailures;
+
+                    const mergedWarnings = [...validation.warnings];
+                    const retryWarning = buildRetryWarning(combinedRetryFailures);
+                    if (retryWarning) {
+                        mergedWarnings.push(retryWarning);
+                    }
+                    draftWarnings.value = mergedWarnings;
+
+                    const retryTip = retryStats.attempted > 0
+                        ? `，阶段2补全成功 ${retryStats.completed}/${retryStats.attempted}`
+                        : '';
+
+                    showOperationNotice?.({
+                        type: 'warning',
+                        title: '角色卡草稿已生成（待补全条目）',
+                        message: `角色名：${validation.normalized.card.name}，仍有 ${combinedRetryFailures.length} 条世界书内容待补全${retryTip}。`,
+                        duration: 6000,
+                    });
+
+                    return {
+                        draft: validation.normalized,
+                        warnings: mergedWarnings,
+                        retryFailures: combinedRetryFailures,
+                        incomplete: true,
+                    };
+                }
+
                 const baseMessage = validation.errors.map(item => `${item.path}: ${item.message}`).join('\n');
                 const retryMessage = retryStats.attempted > 0
                     ? `\n阶段2补全重试：成功 ${retryStats.completed}/${retryStats.attempted}`
                     : '';
-                const retryFailedMessage = retryStats.failed.length > 0
-                    ? `\n补全失败条目：${retryStats.failed.map(item => `${item.entryId}(${item.message})`).join('；')}`
+                const retryFailedMessage = combinedRetryFailures.length > 0
+                    ? `\n补全失败条目：${combinedRetryFailures.map(item => `${item.entryId}(${item.message})`).join('；')}`
                     : '';
                 throw new Error(`${baseMessage}${retryMessage}${retryFailedMessage}`);
             }
 
             draft.value = validation.normalized;
+            retryFailures.value = combinedRetryFailures;
+
             const mergedWarnings = [...validation.warnings];
-            if (retryStats.failed.length > 0) {
-                mergedWarnings.push({
-                    path: 'worldbook.entries',
-                    code: 'ENTRY_RETRY_PARTIAL_FAILED',
-                    message: `阶段2按条目补全存在失败项：${retryStats.failed.map(item => item.entryId).join(', ')}`,
-                });
+            const retryWarning = buildRetryWarning(combinedRetryFailures);
+            if (retryWarning) {
+                mergedWarnings.push(retryWarning);
             }
             draftWarnings.value = mergedWarnings;
 
@@ -300,11 +359,139 @@ export function useCharacterAICreation({ apiSettings, openErrorModal, showOperat
             return {
                 draft: validation.normalized,
                 warnings: mergedWarnings,
+                retryFailures: combinedRetryFailures,
+                incomplete: false,
             };
         } catch (error) {
             openErrorModal?.({
                 title: 'AI 创建角色卡失败',
                 code: 'AI_CHARACTER_CREATE_FAILED',
+                message: error.message,
+                details: { message: error.message },
+            });
+            throw error;
+        } finally {
+            isGenerating.value = false;
+            generationStageLabel.value = '';
+        }
+    };
+
+    const retryFailedEntries = async ({ entryIds } = {}) => {
+        if (!draft.value) {
+            throw new Error('当前没有可重试补全的角色草稿。');
+        }
+
+        if (!apiSettings.value?.url || !apiSettings.value?.model) {
+            throw new Error('请先配置 API URL 和模型后再重试。');
+        }
+
+        const input = lastNormalizedInput.value;
+        if (!input) {
+            throw new Error('缺少创建输入上下文，请重新生成角色草稿后再重试。');
+        }
+
+        const requestedIds = Array.isArray(entryIds)
+            ? new Set(entryIds.map(v => String(v)))
+            : null;
+
+        const targets = retryFailures.value.filter((item) => {
+            if (!requestedIds) return true;
+            return requestedIds.has(String(item.entryId));
+        });
+
+        if (!targets.length) {
+            throw new Error('没有可重试的失败条目。');
+        }
+
+        isGenerating.value = true;
+        generationStageLabel.value = '阶段2补全：手动重试失败条目';
+
+        try {
+            const candidateDraft = cloneJson(draft.value);
+            const runtimeFailures = [];
+            let completed = 0;
+
+            for (let idx = 0; idx < targets.length; idx += 1) {
+                const target = targets[idx];
+                const entries = candidateDraft?.worldbookDraft?.entries || [];
+                const entryIndex = entries.findIndex(entry => String(entry?.id) === String(target.entryId));
+                generationStageLabel.value = `阶段2补全：手动重试 ${idx + 1}/${targets.length}`;
+
+                if (entryIndex < 0) {
+                    runtimeFailures.push({
+                        entryId: String(target.entryId),
+                        entryTitle: target.entryTitle || target.entryId,
+                        message: '目标条目不存在，可能已被删除。',
+                    });
+                    continue;
+                }
+
+                try {
+                    const completion = await retryFillWorldbookEntryContent({
+                        apiSettings: apiSettings.value,
+                        input,
+                        draft: candidateDraft,
+                        entry: entries[entryIndex],
+                        entryIndex,
+                    });
+
+                    entries[entryIndex].content = completion.content;
+                    if (completion.summary) {
+                        entries[entryIndex].summary = completion.summary;
+                    }
+                    completed += 1;
+                } catch (error) {
+                    runtimeFailures.push({
+                        entryId: String(target.entryId),
+                        entryTitle: target.entryTitle || target.entryId,
+                        message: error.message,
+                    });
+                }
+            }
+
+            const validation = validateCharacterDraft(candidateDraft, {
+                requireWorldbookContent: true,
+            });
+
+            const validationFailures = buildContentRetryFailures(
+                validation.errors,
+                validation.normalized?.worldbookDraft?.entries || [],
+            );
+            const remainingFailures = mergeRetryFailureLists(runtimeFailures, validationFailures);
+
+            if (!validation.ok && !isRecoverableContentOnlyErrors(validation.errors)) {
+                const message = validation.errors.map(item => `${item.path}: ${item.message}`).join('\n');
+                throw new Error(message);
+            }
+
+            draft.value = validation.normalized;
+            retryFailures.value = remainingFailures;
+
+            const mergedWarnings = [...validation.warnings];
+            const retryWarning = buildRetryWarning(remainingFailures);
+            if (retryWarning) {
+                mergedWarnings.push(retryWarning);
+            }
+            draftWarnings.value = mergedWarnings;
+
+            showOperationNotice?.({
+                type: remainingFailures.length > 0 ? 'warning' : 'success',
+                title: remainingFailures.length > 0 ? '失败条目重试完成（仍有未补全）' : '失败条目已全部补全',
+                message: `本次重试成功 ${completed}/${targets.length}，剩余未补全 ${remainingFailures.length} 条。`,
+                duration: 5200,
+            });
+
+            return {
+                completed,
+                attempted: targets.length,
+                remainingFailures,
+                warnings: mergedWarnings,
+                draft: validation.normalized,
+            };
+        } catch (error) {
+            openErrorModal?.({
+                title: '重试失败条目失败',
+                code: 'AI_CHARACTER_RETRY_FAILED',
                 message: error.message,
                 details: { message: error.message },
             });
@@ -334,7 +521,9 @@ export function useCharacterAICreation({ apiSettings, openErrorModal, showOperat
     const clearDraft = () => {
         draft.value = null;
         draftWarnings.value = [];
+        retryFailures.value = [];
         generationStageLabel.value = '';
+        lastNormalizedInput.value = null;
     };
 
     return {
@@ -342,7 +531,9 @@ export function useCharacterAICreation({ apiSettings, openErrorModal, showOperat
         generationStageLabel,
         draft,
         draftWarnings,
+        retryFailures,
         generateDraft,
+        retryFailedEntries,
         buildCharacterTemplateFromDraft,
         clearDraft,
     };
