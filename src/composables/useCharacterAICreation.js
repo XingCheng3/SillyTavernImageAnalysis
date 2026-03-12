@@ -23,6 +23,8 @@ import {
 const JSON_REPAIR_SYSTEM_PROMPT = `你是严格 JSON 修复器。
 只输出合法 JSON，不要 markdown，不要解释。`;
 
+const ENTRY_RETRY_CONCURRENCY = 3;
+
 function stripCodeFence(raw = '') {
     let text = String(raw || '').trim();
     if (!text) return '';
@@ -279,6 +281,32 @@ function buildSchemaRepairDraft(normalizedDraft = {}) {
     };
 }
 
+async function runInPool(items = [], worker, concurrency = ENTRY_RETRY_CONCURRENCY) {
+    if (!Array.isArray(items) || items.length === 0) return [];
+
+    const results = new Array(items.length);
+    let nextIndex = 0;
+
+    const runner = async () => {
+        while (nextIndex < items.length) {
+            const currentIndex = nextIndex;
+            nextIndex += 1;
+
+            try {
+                const value = await worker(items[currentIndex], currentIndex);
+                results[currentIndex] = { ok: true, value };
+            } catch (error) {
+                results[currentIndex] = { ok: false, error };
+            }
+        }
+    };
+
+    const poolSize = Math.max(1, Math.min(concurrency, items.length));
+    await Promise.all(Array.from({ length: poolSize }, () => runner()));
+
+    return results;
+}
+
 export function useCharacterAICreation({ apiSettings, openErrorModal, showOperationNotice }) {
     const isGenerating = ref(false);
     const generationStageLabel = ref('');
@@ -368,33 +396,57 @@ export function useCharacterAICreation({ apiSettings, openErrorModal, showOperat
 
                     retryStats.attempted = missingIndexes.length;
 
-                    for (let idx = 0; idx < missingIndexes.length; idx += 1) {
-                        const entryIndex = missingIndexes[idx];
-                        const targetEntry = candidateDraft.worldbookDraft.entries[entryIndex];
-                        generationStageLabel.value = `阶段2补全：重试 ${idx + 1}/${missingIndexes.length}`;
+                    if (missingIndexes.length) {
+                        let settledCount = 0;
 
-                        try {
-                            const completion = await retryFillWorldbookEntryContent({
-                                apiSettings: apiSettings.value,
-                                input: inputValidation.normalized,
-                                draft: candidateDraft,
-                                entry: targetEntry,
-                                entryIndex,
-                            });
+                        const retryResults = await runInPool(
+                            missingIndexes,
+                            async (entryIndex, queueIndex) => {
+                                const targetEntry = candidateDraft.worldbookDraft.entries[entryIndex];
+                                generationStageLabel.value = `阶段2补全：重试 ${queueIndex + 1}/${missingIndexes.length}`;
 
-                            targetEntry.content = completion.content;
-                            if (completion.summary) {
-                                targetEntry.summary = completion.summary;
+                                try {
+                                    const completion = await retryFillWorldbookEntryContent({
+                                        apiSettings: apiSettings.value,
+                                        input: inputValidation.normalized,
+                                        draft: candidateDraft,
+                                        entry: targetEntry,
+                                        entryIndex,
+                                    });
+
+                                    targetEntry.content = completion.content;
+                                    if (completion.summary) {
+                                        targetEntry.summary = completion.summary;
+                                    }
+
+                                    return {
+                                        entryId: String(targetEntry?.id ?? entryIndex),
+                                        entryTitle: targetEntry?.title || targetEntry?.comment || `条目 ${entryIndex + 1}`,
+                                        entryIndex,
+                                    };
+                                } finally {
+                                    settledCount += 1;
+                                    generationStageLabel.value = `阶段2补全：已完成 ${settledCount}/${missingIndexes.length}`;
+                                }
+                            },
+                        );
+
+                        retryResults.forEach((result, idx) => {
+                            const entryIndex = missingIndexes[idx];
+                            const targetEntry = candidateDraft.worldbookDraft.entries[entryIndex];
+
+                            if (result?.ok) {
+                                retryStats.completed += 1;
+                                return;
                             }
-                            retryStats.completed += 1;
-                        } catch (retryError) {
+
                             retryStats.failed.push({
                                 entryId: String(targetEntry?.id ?? entryIndex),
                                 entryTitle: targetEntry?.title || targetEntry?.comment || `条目 ${entryIndex + 1}`,
                                 entryIndex,
-                                message: retryError.message,
+                                message: result?.error?.message || '未知错误',
                             });
-                        }
+                        });
                     }
 
                     validation = validateCharacterDraft(candidateDraft, {
@@ -586,42 +638,58 @@ export function useCharacterAICreation({ apiSettings, openErrorModal, showOperat
             const runtimeFailures = [];
             let completed = 0;
 
-            for (let idx = 0; idx < targets.length; idx += 1) {
-                const target = targets[idx];
-                const entries = candidateDraft?.worldbookDraft?.entries || [];
-                const entryIndex = entries.findIndex(entry => String(entry?.id) === String(target.entryId));
-                generationStageLabel.value = `阶段2补全：手动重试 ${idx + 1}/${targets.length}`;
+            if (targets.length) {
+                let settledCount = 0;
 
-                if (entryIndex < 0) {
-                    runtimeFailures.push({
-                        entryId: String(target.entryId),
-                        entryTitle: target.entryTitle || target.entryId,
-                        message: '目标条目不存在，可能已被删除。',
-                    });
-                    continue;
-                }
+                const retryResults = await runInPool(
+                    targets,
+                    async (target, queueIndex) => {
+                        const entries = candidateDraft?.worldbookDraft?.entries || [];
+                        const entryIndex = entries.findIndex(entry => String(entry?.id) === String(target.entryId));
+                        generationStageLabel.value = `阶段2补全：手动重试 ${queueIndex + 1}/${targets.length}`;
 
-                try {
-                    const completion = await retryFillWorldbookEntryContent({
-                        apiSettings: apiSettings.value,
-                        input,
-                        draft: candidateDraft,
-                        entry: entries[entryIndex],
-                        entryIndex,
-                    });
+                        try {
+                            if (entryIndex < 0) {
+                                throw new Error('目标条目不存在，可能已被删除。');
+                            }
 
-                    entries[entryIndex].content = completion.content;
-                    if (completion.summary) {
-                        entries[entryIndex].summary = completion.summary;
+                            const completion = await retryFillWorldbookEntryContent({
+                                apiSettings: apiSettings.value,
+                                input,
+                                draft: candidateDraft,
+                                entry: entries[entryIndex],
+                                entryIndex,
+                            });
+
+                            entries[entryIndex].content = completion.content;
+                            if (completion.summary) {
+                                entries[entryIndex].summary = completion.summary;
+                            }
+
+                            return {
+                                entryId: String(target.entryId),
+                                entryTitle: target.entryTitle || target.entryId,
+                            };
+                        } finally {
+                            settledCount += 1;
+                            generationStageLabel.value = `阶段2补全：已完成 ${settledCount}/${targets.length}`;
+                        }
+                    },
+                );
+
+                retryResults.forEach((result, idx) => {
+                    if (result?.ok) {
+                        completed += 1;
+                        return;
                     }
-                    completed += 1;
-                } catch (error) {
+
+                    const target = targets[idx] || {};
                     runtimeFailures.push({
-                        entryId: String(target.entryId),
-                        entryTitle: target.entryTitle || target.entryId,
-                        message: error.message,
+                        entryId: String(target.entryId ?? ''),
+                        entryTitle: target.entryTitle || target.entryId || '',
+                        message: result?.error?.message || '未知错误',
                     });
-                }
+                });
             }
 
             const validation = validateCharacterDraft(candidateDraft, {
