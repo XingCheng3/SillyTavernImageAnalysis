@@ -40,6 +40,7 @@
                         <button type="button" @click="restoreInitialSnapshot" class="snapshot-button secondary" :disabled="!canRestoreInitialSnapshot">恢复初始</button>
                         <label for="cover-upload" class="tool-button">替换 / 增加封面</label>
                         <input id="cover-upload" type="file" accept="image/png,image/jpeg,image/webp" @change="handleCoverUpload" class="hidden" />
+                        <button type="button" @click="clearCoverImage" class="tool-button" :disabled="!hasCustomCover">移除封面</button>
                         <span v-if="snapshotMeta.currentLabel" class="snapshot-chip">当前快照：{{ snapshotMeta.currentLabel }}</span>
                         <button type="button" @click="exportCharacterCard" class="export-button">导出角色卡</button>
                     </div>
@@ -758,6 +759,7 @@ const advancedProgressPercentage = computed(() => {
 });
 
 const displayImagePreview = computed(() => imagePreview.value || DEFAULT_COVER_IMAGE_DATA_URI);
+const hasCustomCover = computed(() => !!(originalFileBytes.value && originalFileBytes.value.length > 0));
 
 const {
     selectAllAlternateGreetings,
@@ -798,6 +800,9 @@ const tabs = [
     { id: 'book', name: '世界书' },
     // { id: 'json', name: '原始JSON' }
 ];
+
+const ALLOWED_COVER_MIME_TYPES = ['image/png', 'image/jpeg', 'image/webp'];
+const MAX_COVER_FILE_SIZE = 15 * 1024 * 1024; // 15MB
 
 const clearImagePreviewObjectUrl = () => {
     if (imagePreviewObjectUrl.value) {
@@ -848,17 +853,28 @@ const convertImageFileToPngBytes = async (file) => {
 
     ctx.drawImage(imageSource, 0, 0);
 
-    const pngBlob = await new Promise((resolve, reject) => {
-        canvas.toBlob((blob) => {
-            if (!blob) {
-                reject(new Error('封面转换为 PNG 失败。'));
-                return;
-            }
-            resolve(blob);
-        }, 'image/png');
-    });
+    if (typeof canvas.toBlob === 'function') {
+        const pngBlob = await new Promise((resolve, reject) => {
+            canvas.toBlob((blob) => {
+                if (!blob) {
+                    reject(new Error('封面转换为 PNG 失败。'));
+                    return;
+                }
+                resolve(blob);
+            }, 'image/png');
+        });
 
-    return new Uint8Array(await pngBlob.arrayBuffer());
+        return new Uint8Array(await pngBlob.arrayBuffer());
+    }
+
+    const dataUrl = canvas.toDataURL('image/png');
+    const base64 = String(dataUrl).split(',')[1] || '';
+    const binary = atob(base64);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i += 1) {
+        bytes[i] = binary.charCodeAt(i);
+    }
+    return bytes;
 };
 
 const handleCoverUpload = async (event) => {
@@ -866,7 +882,19 @@ const handleCoverUpload = async (event) => {
     if (!file) return;
 
     try {
+        if (!ALLOWED_COVER_MIME_TYPES.includes(file.type)) {
+            throw new Error('仅支持 PNG / JPG / WEBP 作为封面。');
+        }
+
+        if (file.size > MAX_COVER_FILE_SIZE) {
+            throw new Error(`封面大小不能超过 ${Math.round(MAX_COVER_FILE_SIZE / 1024 / 1024)}MB。`);
+        }
+
         const pngBytes = await convertImageFileToPngBytes(file);
+        if (!pngBytes || pngBytes.length === 0) {
+            throw new Error('封面转换结果为空。');
+        }
+
         originalFileBytes.value = pngBytes;
         setImagePreviewFromBlob(new Blob([pngBytes], { type: 'image/png' }));
 
@@ -879,13 +907,36 @@ const handleCoverUpload = async (event) => {
     } catch (error) {
         showOperationNotice({
             type: 'error',
-            title: '封面更新失败',
+            title: '封面更新失败（已保留原封面）',
             message: error.message,
-            duration: 5000,
+            duration: 5500,
         });
     } finally {
         event.target.value = '';
     }
+};
+
+const clearCoverImage = () => {
+    if (!hasCustomCover.value) {
+        showOperationNotice({
+            type: 'warning',
+            title: '当前没有可移除的封面',
+            message: '你还没有设置封面。',
+            duration: 3000,
+        });
+        return;
+    }
+
+    originalFileBytes.value = null;
+    clearImagePreviewObjectUrl();
+    imagePreview.value = '';
+
+    showOperationNotice({
+        type: 'success',
+        title: '封面已移除',
+        message: '导出时会使用默认占位封面。',
+        duration: 3500,
+    });
 };
 
 // 处理文件上传

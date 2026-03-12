@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict';
-import { getCharacterDraftSchemaName } from '../src/utils/characterAICreationPrompt.js';
+import {
+    buildWorldBookEntryCompletionUserPrompt,
+    getCharacterDraftSchemaName,
+} from '../src/utils/characterAICreationPrompt.js';
 import {
     normalizeCharacterDraft,
     validateCharacterCreateInput,
@@ -139,6 +142,29 @@ function testTwoStepStructureValidationMode() {
     assert.equal(relaxed.ok, true);
 }
 
+function testEntryRetryPromptBuild() {
+    const validDraft = validateCharacterDraft(buildValidDraft()).normalized;
+    const prompt = buildWorldBookEntryCompletionUserPrompt({
+        input: {
+            corePrompt: '测试核心设定',
+            genre: '异世界',
+            style: '高张力',
+            relationshipTone: '互相试探',
+            notes: '不要写空话',
+            language: 'zh-CN',
+        },
+        draft: validDraft,
+        entry: validDraft.worldbookDraft.entries[0],
+        entryIndex: 0,
+    });
+
+    const parsed = JSON.parse(prompt);
+    assert.equal(parsed.stage, 'entry_retry');
+    assert.equal(parsed.targetEntry.id, validDraft.worldbookDraft.entries[0].id);
+    assert.ok(Array.isArray(parsed.siblingOutline));
+    assert.ok(parsed.outputSchema.ct);
+}
+
 function runAllTests() {
     console.log('🚀 开始运行角色卡 AI 从0创建测试\n');
 
@@ -150,6 +176,9 @@ function runAllTests() {
 
     testTwoStepStructureValidationMode();
     console.log('✓ 两阶段结构草稿校验模式正确');
+
+    testEntryRetryPromptBuild();
+    console.log('✓ 阶段2单条补全提示词结构正确');
 
     console.log('\n✅ 角色卡 AI 从0创建测试通过');
 }

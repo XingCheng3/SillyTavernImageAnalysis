@@ -5,6 +5,7 @@ import {
     buildCharacterAICreateStructureUserPrompt,
     buildCharacterAICreateSystemPrompt,
     buildCharacterAICreateUserPrompt,
+    buildWorldBookEntryCompletionUserPrompt,
 } from '@/utils/characterAICreationPrompt';
 import {
     CHARACTER_CREATE_GENERATION_MODES,
@@ -94,6 +95,48 @@ async function requestDraftFromModel({ apiSettings, userPrompt, temperature = 0.
     return parseDraftResponse(content);
 }
 
+function parseEntryCompletionResponse(raw = {}) {
+    const content = String(raw?.ct ?? raw?.content ?? raw?.text ?? '').trim();
+    const summary = String(raw?.sm ?? raw?.summary ?? '').trim();
+
+    if (!content) {
+        throw new Error('补全结果缺少 ct/content。');
+    }
+
+    return {
+        content,
+        summary,
+    };
+}
+
+function collectMissingContentEntryIndexes(entries = []) {
+    return entries
+        .map((entry, index) => ({ entry, index }))
+        .filter(({ entry }) => !String(entry?.content || '').trim())
+        .map(({ index }) => index);
+}
+
+async function retryFillWorldbookEntryContent({
+    apiSettings,
+    input,
+    draft,
+    entry,
+    entryIndex,
+}) {
+    const raw = await requestDraftFromModel({
+        apiSettings,
+        userPrompt: buildWorldBookEntryCompletionUserPrompt({
+            input,
+            draft,
+            entry,
+            entryIndex,
+        }),
+        temperature: 0.75,
+    });
+
+    return parseEntryCompletionResponse(raw);
+}
+
 export function useCharacterAICreation({ apiSettings, openErrorModal, showOperationNotice }) {
     const isGenerating = ref(false);
     const generationStageLabel = ref('');
@@ -115,6 +158,11 @@ export function useCharacterAICreation({ apiSettings, openErrorModal, showOperat
 
         try {
             let validation;
+            const retryStats = {
+                attempted: 0,
+                completed: 0,
+                failed: [],
+            };
 
             if (inputValidation.normalized.generationMode === CHARACTER_CREATE_GENERATION_MODES.TWO_STEP) {
                 generationStageLabel.value = '阶段1：生成结构骨架';
@@ -132,16 +180,77 @@ export function useCharacterAICreation({ apiSettings, openErrorModal, showOperat
                     throw new Error(structureValidation.errors.map(item => `${item.path}: ${item.message}`).join('\n'));
                 }
 
-                generationStageLabel.value = '阶段2：扩写细化内容';
-                const expandedRawDraft = await requestDraftFromModel({
-                    apiSettings: apiSettings.value,
-                    userPrompt: buildCharacterAICreateExpandUserPrompt(inputValidation.normalized, structureValidation.normalized),
-                    temperature: 0.8,
-                });
+                let retryBaseDraft = structureValidation.normalized;
+                let expandedStrictValidation = null;
 
-                validation = validateCharacterDraft(expandedRawDraft, {
-                    requireWorldbookContent: true,
-                });
+                try {
+                    generationStageLabel.value = '阶段2：扩写细化内容';
+                    const expandedRawDraft = await requestDraftFromModel({
+                        apiSettings: apiSettings.value,
+                        userPrompt: buildCharacterAICreateExpandUserPrompt(inputValidation.normalized, structureValidation.normalized),
+                        temperature: 0.8,
+                    });
+
+                    const expandedRelaxedValidation = validateCharacterDraft(expandedRawDraft, {
+                        requireWorldbookContent: false,
+                    });
+
+                    if (!expandedRelaxedValidation.ok) {
+                        throw new Error(expandedRelaxedValidation.errors.map(item => `${item.path}: ${item.message}`).join('\n'));
+                    }
+
+                    retryBaseDraft = expandedRelaxedValidation.normalized;
+                    expandedStrictValidation = validateCharacterDraft(expandedRawDraft, {
+                        requireWorldbookContent: true,
+                    });
+                } catch (stage2Error) {
+                    showOperationNotice?.({
+                        type: 'warning',
+                        title: '阶段2扩写失败，开始按条目补全重试',
+                        message: stage2Error.message,
+                        duration: 4500,
+                    });
+                }
+
+                if (!expandedStrictValidation || !expandedStrictValidation.ok) {
+                    const candidateDraft = JSON.parse(JSON.stringify(retryBaseDraft));
+                    const missingIndexes = collectMissingContentEntryIndexes(candidateDraft?.worldbookDraft?.entries || []);
+
+                    retryStats.attempted = missingIndexes.length;
+
+                    for (let idx = 0; idx < missingIndexes.length; idx += 1) {
+                        const entryIndex = missingIndexes[idx];
+                        const targetEntry = candidateDraft.worldbookDraft.entries[entryIndex];
+                        generationStageLabel.value = `阶段2补全：重试 ${idx + 1}/${missingIndexes.length}`;
+
+                        try {
+                            const completion = await retryFillWorldbookEntryContent({
+                                apiSettings: apiSettings.value,
+                                input: inputValidation.normalized,
+                                draft: candidateDraft,
+                                entry: targetEntry,
+                                entryIndex,
+                            });
+
+                            targetEntry.content = completion.content;
+                            if (completion.summary) {
+                                targetEntry.summary = completion.summary;
+                            }
+                            retryStats.completed += 1;
+                        } catch (retryError) {
+                            retryStats.failed.push({
+                                entryId: String(targetEntry?.id ?? entryIndex),
+                                message: retryError.message,
+                            });
+                        }
+                    }
+
+                    validation = validateCharacterDraft(candidateDraft, {
+                        requireWorldbookContent: true,
+                    });
+                } else {
+                    validation = expandedStrictValidation;
+                }
             } else {
                 generationStageLabel.value = '单阶段生成';
                 const rawDraft = await requestDraftFromModel({
@@ -156,22 +265,41 @@ export function useCharacterAICreation({ apiSettings, openErrorModal, showOperat
             }
 
             if (!validation.ok) {
-                throw new Error(validation.errors.map(item => `${item.path}: ${item.message}`).join('\n'));
+                const baseMessage = validation.errors.map(item => `${item.path}: ${item.message}`).join('\n');
+                const retryMessage = retryStats.attempted > 0
+                    ? `\n阶段2补全重试：成功 ${retryStats.completed}/${retryStats.attempted}`
+                    : '';
+                const retryFailedMessage = retryStats.failed.length > 0
+                    ? `\n补全失败条目：${retryStats.failed.map(item => `${item.entryId}(${item.message})`).join('；')}`
+                    : '';
+                throw new Error(`${baseMessage}${retryMessage}${retryFailedMessage}`);
             }
 
             draft.value = validation.normalized;
-            draftWarnings.value = validation.warnings;
+            const mergedWarnings = [...validation.warnings];
+            if (retryStats.failed.length > 0) {
+                mergedWarnings.push({
+                    path: 'worldbook.entries',
+                    code: 'ENTRY_RETRY_PARTIAL_FAILED',
+                    message: `阶段2按条目补全存在失败项：${retryStats.failed.map(item => item.entryId).join(', ')}`,
+                });
+            }
+            draftWarnings.value = mergedWarnings;
+
+            const retryTip = retryStats.attempted > 0
+                ? `，阶段2补全成功 ${retryStats.completed}/${retryStats.attempted}`
+                : '';
 
             showOperationNotice?.({
-                type: validation.warnings.length ? 'warning' : 'success',
-                title: validation.warnings.length ? '角色卡草稿已生成（含提醒）' : '角色卡草稿生成成功',
-                message: `角色名：${validation.normalized.card.name}，世界书条目：${validation.normalized.worldbookDraft.entries.length}。`,
-                duration: 5000,
+                type: mergedWarnings.length ? 'warning' : 'success',
+                title: mergedWarnings.length ? '角色卡草稿已生成（含提醒）' : '角色卡草稿生成成功',
+                message: `角色名：${validation.normalized.card.name}，世界书条目：${validation.normalized.worldbookDraft.entries.length}${retryTip}。`,
+                duration: 5500,
             });
 
             return {
                 draft: validation.normalized,
-                warnings: validation.warnings,
+                warnings: mergedWarnings,
             };
         } catch (error) {
             openErrorModal?.({

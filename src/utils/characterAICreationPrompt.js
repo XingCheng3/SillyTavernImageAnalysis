@@ -93,3 +93,51 @@ export function buildCharacterAICreateUserPrompt(input = {}) {
 
     return JSON.stringify(payload, null, 2);
 }
+
+export function buildWorldBookEntryCompletionUserPrompt({ input = {}, draft = {}, entry = {}, entryIndex = 0 }) {
+    const payload = {
+        task: '补全世界书单条内容（阶段2失败重试）',
+        stage: 'entry_retry',
+        language: input.language || 'zh-CN',
+        corePrompt: input.corePrompt || '',
+        genre: input.genre || '',
+        style: input.style || '',
+        relationshipTone: input.relationshipTone || '',
+        notes: input.notes || '',
+        book: {
+            name: draft?.worldbookDraft?.book?.name || '',
+            description: draft?.worldbookDraft?.book?.description || '',
+            entryCount: draft?.worldbookDraft?.entries?.length || 0,
+        },
+        targetEntry: {
+            index: entryIndex,
+            id: entry.id,
+            title: entry.title,
+            summary: entry.summary,
+            light: entry.light,
+            keywords: entry.keywords,
+            insertionOrder: entry.insertionOrder,
+            depth: entry.depth,
+            position: entry.position,
+            currentContent: entry.content || '',
+        },
+        siblingOutline: (draft?.worldbookDraft?.entries || []).map((item, index) => ({
+            index,
+            id: item.id,
+            title: item.title,
+            summary: item.summary,
+            hasContent: !!String(item.content || '').trim(),
+        })),
+        outputSchema: {
+            ct: 'string',
+            sm: 'string(optional)',
+        },
+        outputRules: [
+            '只输出 JSON，禁止解释文字',
+            'ct 必须非空，且具备剧情可用性',
+            '不要修改条目 id/title/keywords/light 等结构字段',
+        ],
+    };
+
+    return JSON.stringify(payload, null, 2);
+}

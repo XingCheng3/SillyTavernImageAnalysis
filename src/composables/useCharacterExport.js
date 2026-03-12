@@ -24,6 +24,7 @@ export function useCharacterExport({ characterData, editableData, originalFileBy
                 finalCharacterData.spec = finalCharacterData.spec || getSpecVersion();
             }
 
+            const hasCustomCover = !!(originalFileBytes.value && originalFileBytes.value.length > 0);
             const newPngBytes = CharacterCardUtils.exportToPNG(finalCharacterData, originalFileBytes.value);
 
             const characterName = editableData.value.name || 'character';
@@ -33,9 +34,11 @@ export function useCharacterExport({ characterData, editableData, originalFileBy
             CharacterCardUtils.downloadPNG(newPngBytes, filename);
 
             showOperationNotice({
-                type: 'success',
+                type: hasCustomCover ? 'success' : 'warning',
                 title: '导出成功',
-                message: `已生成并下载 ${filename}`,
+                message: hasCustomCover
+                    ? `已生成并下载 ${filename}（包含当前封面）`
+                    : `已生成并下载 ${filename}（未设置封面，使用默认占位封面）`,
             });
             console.log('角色卡导出成功');
 
