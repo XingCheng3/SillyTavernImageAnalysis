@@ -59,7 +59,7 @@ function buildValidDraft() {
             creator_notes: '强调命运抗争和成长弧线。',
             system_prompt: '保持战斗叙事张力，避免流水账。',
             post_history_instructions: '在关键节点给出明确行动选项。',
-            message_example: '她握住刀柄，低声道：这次我不会再退后。',
+            message_example: '<START>\n{{user}}：你准备好了吗？\n{{char}}：我不会再退后。\n<END>',
         },
         worldbook: {
             schema: 'sillytavern.worldbook.ai.draft.v1',
@@ -134,6 +134,29 @@ function testDraftNormalizationAndValidation() {
     assert.equal(result.normalized.worldbookDraft.book.name, '裂界学院世界书');
 }
 
+function testMessageExamplePlaceholderValidation() {
+    const bad = buildValidDraft();
+    bad.card.message_example = '<START>\n用户：你好\n角色：你好\n<END>';
+
+    const result = validateCharacterDraft(bad);
+    assert.equal(result.ok, false);
+    assert.ok(result.errors.some(item => item.code === 'MESSAGE_EXAMPLE_USER_PLACEHOLDER_REQUIRED'));
+    assert.ok(result.errors.some(item => item.code === 'MESSAGE_EXAMPLE_CHAR_PLACEHOLDER_REQUIRED'));
+}
+
+function testNestedWorldbookFallback() {
+    const nested = buildValidDraft();
+    nested.card.worldbook = nested.worldbook;
+    delete nested.worldbook;
+
+    const normalized = normalizeCharacterDraft(nested);
+    assert.equal(normalized.worldbookDraft.entries.length, 3);
+
+    const result = validateCharacterDraft(nested);
+    assert.equal(result.ok, true);
+    assert.equal(result.normalized.worldbookDraft.entries[0].id, 'E01');
+}
+
 function testTwoStepStructureValidationMode() {
     const structureDraft = buildValidDraft();
     structureDraft.worldbook.entries.forEach((entry) => {
@@ -204,6 +227,12 @@ function runAllTests() {
 
     testDraftNormalizationAndValidation();
     console.log('✓ 草稿标准化与结构校验正确');
+
+    testMessageExamplePlaceholderValidation();
+    console.log('✓ 用户占位符规则校验正确');
+
+    testNestedWorldbookFallback();
+    console.log('✓ worldbook 错层级兼容恢复正确');
 
     testTwoStepStructureValidationMode();
     console.log('✓ 两阶段结构草稿校验模式正确');

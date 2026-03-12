@@ -15,6 +15,9 @@
                         <li>应用草稿后进入编辑台继续微调</li>
                         <li>可上传/替换封面后导出角色卡 PNG</li>
                     </ol>
+                    <p class="tips-hint">
+                        对话示例占位符约定：用户必须使用 <code>&#123;&#123;user&#125;&#125;</code>，角色必须使用 <code>&#123;&#123;char&#125;&#125;</code>。
+                    </p>
                 </div>
 
                 <div class="section-card">
@@ -99,13 +102,29 @@
                     <div class="retry-failures" v-if="retryFailures?.length">
                         <div class="retry-header">
                             <h4>待补全失败条目（{{ retryFailures.length }}）</h4>
-                            <button class="small-button" @click="$emit('retry-failed')" :disabled="isGenerating">重试失败条目</button>
+                            <div class="retry-actions">
+                                <button class="text-button" @click="selectAllRetryFailures" :disabled="isGenerating">全选</button>
+                                <button class="text-button" @click="clearRetrySelection" :disabled="isGenerating || !selectedRetryCount">清空</button>
+                                <button class="small-button" @click="emitRetryFailed" :disabled="isGenerating || !selectedRetryCount">
+                                    重试选中（{{ selectedRetryCount }}）
+                                </button>
+                            </div>
                         </div>
                         <ul>
                             <li v-for="item in retryFailures" :key="item.entryId">
-                                <strong>{{ item.entryId }}</strong>
-                                <span v-if="item.entryTitle">（{{ item.entryTitle }}）</span>
-                                ：{{ item.message }}
+                                <label class="retry-item-check">
+                                    <input
+                                        type="checkbox"
+                                        :value="String(item.entryId)"
+                                        v-model="selectedRetryEntryIds"
+                                        :disabled="isGenerating"
+                                    />
+                                    <span class="retry-item-text">
+                                        <strong>{{ item.entryId }}</strong>
+                                        <span v-if="item.entryTitle">（{{ item.entryTitle }}）</span>
+                                        ：{{ item.message }}
+                                    </span>
+                                </label>
                             </li>
                         </ul>
                     </div>
@@ -125,7 +144,9 @@
 </template>
 
 <script setup>
-defineProps({
+import { computed, ref, watch } from 'vue';
+
+const props = defineProps({
     show: { type: Boolean, required: true },
     isGenerating: { type: Boolean, default: false },
     generationStageLabel: { type: String, default: '' },
@@ -135,7 +156,38 @@ defineProps({
     retryFailures: { type: Array, default: () => [] },
 });
 
-defineEmits(['close', 'generate', 'retry-failed', 'apply']);
+const emit = defineEmits(['close', 'generate', 'retry-failed', 'apply']);
+
+const selectedRetryEntryIds = ref([]);
+
+const syncRetrySelection = (list = []) => {
+    const ids = Array.isArray(list) ? list.map(item => String(item.entryId)) : [];
+    selectedRetryEntryIds.value = [...new Set(ids)];
+};
+
+watch(
+    () => props.retryFailures,
+    (list) => {
+        syncRetrySelection(list);
+    },
+    { immediate: true, deep: true },
+);
+
+const selectedRetryCount = computed(() => selectedRetryEntryIds.value.length);
+
+const selectAllRetryFailures = () => {
+    syncRetrySelection(props.retryFailures);
+};
+
+const clearRetrySelection = () => {
+    selectedRetryEntryIds.value = [];
+};
+
+const emitRetryFailed = () => {
+    emit('retry-failed', {
+        entryIds: [...selectedRetryEntryIds.value],
+    });
+};
 </script>
 
 <style scoped>
@@ -161,6 +213,21 @@ defineEmits(['close', 'generate', 'retry-failed', 'apply']);
     padding-left: 20px;
     color: #57534e;
     line-height: 1.8;
+}
+
+.tips-hint {
+    margin: 10px 0 0;
+    font-size: 12px;
+    color: #57534e;
+    line-height: 1.6;
+}
+
+.tips-hint code {
+    background: #f5f5f4;
+    border: 1px solid #d6d3d1;
+    border-radius: 6px;
+    padding: 1px 6px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
 }
 
 .form-grid {
@@ -276,12 +343,47 @@ defineEmits(['close', 'generate', 'retry-failed', 'apply']);
     color: #991b1b;
 }
 
+.retry-actions {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.text-button {
+    border: none;
+    background: transparent;
+    color: #991b1b;
+    cursor: pointer;
+    font-size: 12px;
+    padding: 0;
+}
+
+.text-button:disabled {
+    color: #b91c1c88;
+    cursor: not-allowed;
+}
+
 .retry-failures ul {
     margin: 8px 0 0;
-    padding-left: 18px;
+    padding-left: 0;
+    list-style: none;
     font-size: 12px;
     line-height: 1.6;
     color: #7f1d1d;
+}
+
+.retry-item-check {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+}
+
+.retry-item-check input {
+    margin-top: 3px;
+}
+
+.retry-item-text {
+    flex: 1;
 }
 
 .stage-tip {

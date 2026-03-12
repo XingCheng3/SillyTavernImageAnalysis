@@ -8,11 +8,13 @@ const SYSTEM_PROMPT = `你是“角色卡架构师”。
 硬性规则：
 1) 只输出 JSON，不允许 markdown、注释或解释。
 2) schema 必须是 ${CHARACTER_DRAFT_SCHEMA}
-3) card 字段必须完整：name, description, personality, scenario, first_message, alternate_greetings, creator_notes, system_prompt, post_history_instructions, message_example。
-4) worldbook 必须使用紧凑 schema（与世界书 AI 代写一致），蓝绿灯语义正确：
+3) 顶层字段必须是 schema / card / worldbook，禁止把 worldbook 放进 card 里。
+4) card 字段必须完整：name, description, personality, scenario, first_message, alternate_greetings, creator_notes, system_prompt, post_history_instructions, message_example。
+5) worldbook 必须使用紧凑 schema（与世界书 AI 代写一致），蓝绿灯语义正确：
    - blue = 关键词触发
    - green = 直接载入上下文
-5) 当 stage=structure 时，worldbook.entries[*].ct 允许为空或占位文本；当 stage=single/expand 时，条目内容必须实用、可用于剧情推进，避免空洞设定。`;
+6) 当 stage=structure 时，worldbook.entries[*].ct 允许为空或占位文本；当 stage=single/expand 时，条目内容必须实用、可用于剧情推进，避免空洞设定。
+7) 涉及用户的示例对话必须使用 {{user}} 占位符，角色使用 {{char}} 占位符。`;
 
 export function getCharacterDraftSchemaName() {
     return CHARACTER_DRAFT_SCHEMA;
@@ -20,6 +22,62 @@ export function getCharacterDraftSchemaName() {
 
 export function buildCharacterAICreateSystemPrompt() {
     return SYSTEM_PROMPT;
+}
+
+function getSimpleOutputExample() {
+    return {
+        schema: CHARACTER_DRAFT_SCHEMA,
+        card: {
+            name: '示例角色',
+            description: '角色背景简介',
+            personality: '角色性格要点',
+            scenario: '当前世界/开局场景',
+            first_message: '这是角色首条开场白。',
+            alternate_greetings: ['备选开场白1', '备选开场白2'],
+            creator_notes: '作者备注',
+            system_prompt: '扮演规则与风格要求',
+            post_history_instructions: '持续生效的补充规则',
+            message_example: '<START>\n{{user}}：示例提问\n{{char}}：示例回答\n<END>',
+        },
+        worldbook: {
+            schema: 'sillytavern.worldbook.ai.draft.v1',
+            book: {
+                name: '示例世界书',
+                description: '世界书简介',
+                genre: '题材标签',
+                style: '文风标签',
+            },
+            generation: {
+                language: 'zh-CN',
+                targetEntryCount: 2,
+                openingCount: 1,
+                notes: '示例说明',
+            },
+            entries: [
+                {
+                    id: 'E01',
+                    c: '世界观总览',
+                    k: ['关键词A', '关键词B'],
+                    lt: 'green',
+                    io: 10,
+                    dp: 4,
+                    ps: 'b',
+                    en: true,
+                    sm: '条目摘要',
+                    ct: '条目正文（structure 阶段可占位）',
+                },
+            ],
+            openings: [
+                {
+                    id: 'OP1',
+                    t: '开场分支标题',
+                    tx: '开场正文',
+                    en: ['E01'],
+                    dis: [],
+                },
+            ],
+        },
+    };
 }
 
 function buildBasePayload(input = {}) {
@@ -36,7 +94,10 @@ function buildBasePayload(input = {}) {
             '只输出 JSON 本体，禁止 ```json 代码块',
             '禁止输出解释性文字或注释',
             '输出必须可被 JSON.parse 直接解析',
+            '顶层字段必须是 schema/card/worldbook，且 worldbook 不能嵌套到 card 内',
+            'message_example 必须包含 {{user}} 与 {{char}} 占位符',
         ],
+        simpleOutputExample: getSimpleOutputExample(),
         outputSchema: {
             schema: CHARACTER_DRAFT_SCHEMA,
             card: {
@@ -155,10 +216,39 @@ export function buildCharacterAIJsonRepairUserPrompt({ rawText = '', schemaHint 
             '只输出 JSON 本体，不要 markdown 代码块，不要解释',
             '修复缺失引号、缺失逗号、未闭合对象/数组、转义错误',
             '保留原始语义，禁止擅自新增无关字段',
+            '顶层字段应保持 schema/card/worldbook，禁止把 worldbook 塞入 card',
+            'message_example 若存在用户参与，必须包含 {{user}} 与 {{char}} 占位符',
             '如果无法完全恢复，优先保留可确定字段并保证 JSON 可解析',
         ],
         schemaHint,
+        simpleOutputExample: getSimpleOutputExample(),
         rawText,
+    };
+
+    return JSON.stringify(payload, null, 2);
+}
+
+export function buildCharacterAISchemaRepairUserPrompt({ draft = {}, errors = [], input = {}, stage = 'expand' } = {}) {
+    const payload = {
+        task: '根据校验错误修复角色卡草稿',
+        stage: 'schema_repair',
+        sourceStage: stage,
+        language: input.language || 'zh-CN',
+        corePrompt: input.corePrompt || '',
+        validationErrors: (errors || []).map((item) => ({
+            path: item.path,
+            code: item.code,
+            message: item.message,
+        })),
+        rules: [
+            '只输出 JSON 本体，不要解释、不要 markdown',
+            '顶层必须只有 schema/card/worldbook 三个主字段',
+            'worldbook.entries 至少 1 条；蓝灯必须有关键词',
+            'message_example 必须包含 {{user}} 与 {{char}}',
+            '尽量保留原语义，仅修复结构与缺失项',
+        ],
+        simpleOutputExample: getSimpleOutputExample(),
+        draft,
     };
 
     return JSON.stringify(payload, null, 2);

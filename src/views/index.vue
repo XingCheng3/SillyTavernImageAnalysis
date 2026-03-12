@@ -1040,7 +1040,7 @@ const handleGenerateCharacterAIDraft = async () => {
     }
 };
 
-const handleRetryCharacterAIFailedEntries = async () => {
+const handleRetryCharacterAIFailedEntries = async ({ entryIds } = {}) => {
     if (!characterAICreateRetryFailures.value.length) {
         showOperationNotice({
             type: 'warning',
@@ -1051,8 +1051,24 @@ const handleRetryCharacterAIFailedEntries = async () => {
         return;
     }
 
+    const selectedEntryIds = Array.isArray(entryIds)
+        ? [...new Set(entryIds.map(v => String(v)).filter(Boolean))]
+        : [];
+
+    if (!selectedEntryIds.length) {
+        showOperationNotice({
+            type: 'warning',
+            title: '请先选择要重试的条目',
+            message: '至少勾选 1 条失败条目后再执行重试。',
+            duration: 3200,
+        });
+        return;
+    }
+
     try {
-        await retryCharacterAIDraftFailedEntries();
+        await retryCharacterAIDraftFailedEntries({
+            entryIds: selectedEntryIds,
+        });
     } catch {
         // 错误已在 composable 统一处理
     }

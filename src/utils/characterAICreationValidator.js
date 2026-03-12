@@ -69,7 +69,7 @@ export function validateCharacterCreateInput(input = {}) {
 export function normalizeCharacterDraft(raw = {}) {
     const schema = normalizeString(raw.schema) || getCharacterDraftSchemaName();
     const card = raw.card || {};
-    const worldbook = raw.worldbook || {};
+    const worldbook = raw.worldbook || raw?.card?.worldbook || {};
 
     const normalizedCard = {
         name: normalizeString(card.name),
@@ -131,6 +131,30 @@ export function validateCharacterDraft(raw = {}, options = {}) {
             code: 'FIRST_MESSAGE_EMPTY',
             message: '首条开场白为空，建议至少提供 1 条。',
         });
+    }
+
+    if (!normalized.card.message_example) {
+        warnings.push({
+            path: 'card.message_example',
+            code: 'MESSAGE_EXAMPLE_EMPTY',
+            message: 'message_example 为空，建议至少提供 1 条包含占位符的示例。',
+        });
+    } else {
+        if (!normalized.card.message_example.includes('{{user}}')) {
+            errors.push({
+                path: 'card.message_example',
+                code: 'MESSAGE_EXAMPLE_USER_PLACEHOLDER_REQUIRED',
+                message: 'message_example 必须包含 {{user}} 占位符。',
+            });
+        }
+
+        if (!normalized.card.message_example.includes('{{char}}')) {
+            errors.push({
+                path: 'card.message_example',
+                code: 'MESSAGE_EXAMPLE_CHAR_PLACEHOLDER_REQUIRED',
+                message: 'message_example 必须包含 {{char}} 占位符。',
+            });
+        }
     }
 
     const worldbookResult = validateWorldBookGenerationDraft(normalized.worldbookDraft, {

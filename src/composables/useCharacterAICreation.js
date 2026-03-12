@@ -6,6 +6,7 @@ import {
     buildCharacterAICreateSystemPrompt,
     buildCharacterAICreateUserPrompt,
     buildCharacterAIJsonRepairUserPrompt,
+    buildCharacterAISchemaRepairUserPrompt,
     buildWorldBookEntryCompletionUserPrompt,
 } from '@/utils/characterAICreationPrompt';
 import {
@@ -181,12 +182,14 @@ async function requestDraftFromModel({
     temperature = 0.8,
     maxTokens = 6000,
     schemaHint = '',
+    systemPrompt = buildCharacterAICreateSystemPrompt(),
 }) {
     const content = await requestContentFromModel({
         apiSettings,
         userPrompt,
         temperature,
         maxTokens,
+        systemPrompt,
     });
 
     try {
@@ -266,6 +269,14 @@ function buildRetryWarning(failures = []) {
 
 function cloneJson(value) {
     return JSON.parse(JSON.stringify(value));
+}
+
+function buildSchemaRepairDraft(normalizedDraft = {}) {
+    return {
+        schema: normalizedDraft?.schema || '',
+        card: cloneJson(normalizedDraft?.card || {}),
+        worldbook: cloneJson(normalizedDraft?.worldbookDraft || {}),
+    };
 }
 
 export function useCharacterAICreation({ apiSettings, openErrorModal, showOperationNotice }) {
@@ -405,6 +416,51 @@ export function useCharacterAICreation({ apiSettings, openErrorModal, showOperat
                 validation = validateCharacterDraft(rawDraft, {
                     requireWorldbookContent: true,
                 });
+            }
+
+            if (!validation.ok) {
+                try {
+                    generationStageLabel.value = '结构修复：校验错误重写';
+                    const repairedRawDraft = await requestDraftFromModel({
+                        apiSettings: apiSettings.value,
+                        userPrompt: buildCharacterAISchemaRepairUserPrompt({
+                            draft: buildSchemaRepairDraft(validation.normalized),
+                            errors: validation.errors,
+                            input: inputValidation.normalized,
+                            stage: inputValidation.normalized.generationMode,
+                        }),
+                        temperature: 0.2,
+                        maxTokens: 7000,
+                        schemaHint: 'sillytavern.character.ai.draft.v1',
+                    });
+
+                    const repairedValidation = validateCharacterDraft(repairedRawDraft, {
+                        requireWorldbookContent: true,
+                    });
+
+                    const previousErrorCount = validation.errors.length;
+                    if (
+                        repairedValidation.ok
+                        || repairedValidation.errors.length < previousErrorCount
+                    ) {
+                        validation = repairedValidation;
+                        showOperationNotice?.({
+                            type: repairedValidation.ok ? 'success' : 'warning',
+                            title: repairedValidation.ok ? '草稿结构修复成功' : '草稿结构已部分修复',
+                            message: repairedValidation.ok
+                                ? '校验修复后已通过。'
+                                : `错误数量 ${previousErrorCount} -> ${repairedValidation.errors.length}`,
+                            duration: 4200,
+                        });
+                    }
+                } catch (repairError) {
+                    showOperationNotice?.({
+                        type: 'warning',
+                        title: '校验修复未成功',
+                        message: repairError.message,
+                        duration: 4200,
+                    });
+                }
             }
 
             const retryFailuresFromValidation = buildContentRetryFailures(
