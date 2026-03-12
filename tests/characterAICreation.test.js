@@ -1,4 +1,9 @@
 import assert from 'node:assert/strict';
+import CharacterCardParser, { CharacterCardUtils } from '../src/utils/characterCardParser.js';
+import {
+    buildEditableCharacterData,
+    createEmptyBookEntry,
+} from '../src/utils/editorCardAdapter.js';
 import {
     buildWorldBookEntryCompletionUserPrompt,
     getCharacterAIDraftJsonSchema,
@@ -11,10 +16,16 @@ import {
     validateCharacterDraft,
 } from '../src/utils/characterAICreationValidator.js';
 import {
+    buildCharacterTemplateFromDraft,
+} from '../src/utils/characterAICreationApply.js';
+import {
     buildContentRetryFailures,
     isRecoverableContentOnlyErrors,
     mergeRetryFailureLists,
 } from '../src/utils/characterAICreationRetry.js';
+import {
+    applyWorldBookDraftToEditableData,
+} from '../src/utils/worldBookAIDraftApply.js';
 
 function testInputValidation() {
     const invalid = validateCharacterCreateInput({
@@ -253,6 +264,70 @@ function testStructuredOutputSchemas() {
     assert.ok(completionSchema.required.includes('ct'));
 }
 
+async function testBusinessFlowApplyAndExport() {
+    const draft = validateCharacterDraft(buildValidDraft()).normalized;
+    const { characterData, worldbookDraft } = buildCharacterTemplateFromDraft(draft);
+    const editableData = buildEditableCharacterData(characterData);
+
+    const applyResult = applyWorldBookDraftToEditableData(editableData, worldbookDraft, {
+        replaceExisting: true,
+        applyOpeningsToGreetings: true,
+    });
+
+    assert.equal(applyResult.totalCount, 3);
+    assert.equal(editableData.book_entries.length, 3);
+    assert.equal(editableData.book_entries[0].constant, true, 'green 条目应映射为常驻');
+    assert.equal(editableData.book_entries[1].selective, true, 'blue 条目应映射为关键词触发');
+    assert.equal(editableData.first_message, '警报响彻校园，所有新生被紧急集结。');
+    assert.equal(editableData.alternate_greetings.length, 0);
+
+    const exportPayload = JSON.parse(JSON.stringify(characterData));
+    exportPayload.data = editableData;
+
+    const pngBytes = CharacterCardUtils.exportToPNG(exportPayload);
+    const parsed = await CharacterCardParser.parseFromBuffer(pngBytes.buffer);
+    const exportedData = parsed.data.data;
+
+    assert.equal(exportedData.name, '艾琳·裂界');
+    assert.equal(exportedData.first_mes, '警报响彻校园，所有新生被紧急集结。');
+    assert.equal(exportedData.character_book.entries.length, 3);
+    assert.equal(
+        exportedData.character_book.extensions.ai_opening_branches[0].title,
+        '裂界警报夜',
+    );
+}
+
+function testBusinessFlowAppendAndDisableGreetingSync() {
+    const draft = validateCharacterDraft(buildValidDraft()).normalized;
+    const { characterData, worldbookDraft } = buildCharacterTemplateFromDraft(draft);
+    const editableData = buildEditableCharacterData(characterData);
+
+    editableData.book_entries = [
+        createEmptyBookEntry(0, {
+            id: 777,
+            comment: '已有条目',
+            content: '这是已有条目内容。',
+            insertion_order: 5,
+            keys: ['已有'],
+            keysText: '已有',
+        }),
+    ];
+
+    const originalFirstMessage = editableData.first_message;
+
+    const applyResult = applyWorldBookDraftToEditableData(editableData, worldbookDraft, {
+        replaceExisting: false,
+        applyOpeningsToGreetings: false,
+    });
+
+    assert.equal(applyResult.replaced, false);
+    assert.equal(applyResult.addedCount, 3);
+    assert.equal(applyResult.totalCount, 4);
+    assert.equal(editableData.book_entries[0].id, 777, '追加模式不能覆盖已有条目');
+    assert.equal(editableData.first_message, originalFirstMessage, '关闭开场同步时不应改写 first_message');
+    assert.equal(editableData.alternate_greetings.length, 2);
+}
+
 function testRetryFailureHelpers() {
     const errors = [
         { code: 'ENTRY_CONTENT_REQUIRED', path: 'worldbook.entries[1].content', message: '条目内容不能为空' },
@@ -279,7 +354,7 @@ function testRetryFailureHelpers() {
     assert.ok(merged.some(item => item.entryId === 'E02'));
 }
 
-function runAllTests() {
+async function runAllTests() {
     console.log('🚀 开始运行角色卡 AI 从0创建测试\n');
 
     testInputValidation();
@@ -309,10 +384,20 @@ function runAllTests() {
     testStructuredOutputSchemas();
     console.log('✓ Structured Output JSON Schema 约束正确');
 
+    await testBusinessFlowApplyAndExport();
+    console.log('✓ 从0创建 -> 应用 -> 导出 主链路正确');
+
+    testBusinessFlowAppendAndDisableGreetingSync();
+    console.log('✓ 追加应用与开场同步开关业务行为正确');
+
     testRetryFailureHelpers();
     console.log('✓ 补全失败聚合与恢复判断正确');
 
     console.log('\n✅ 角色卡 AI 从0创建测试通过');
 }
 
-runAllTests();
+runAllTests().catch((error) => {
+    console.error('\n❌ 测试失败');
+    console.error(error);
+    process.exit(1);
+});

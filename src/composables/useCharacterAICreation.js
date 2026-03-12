@@ -1,5 +1,4 @@
 import { ref } from 'vue';
-import { CharacterCardUtils } from '@/utils/characterCardParser';
 import {
     buildCharacterAICreateExpandUserPrompt,
     buildCharacterAICreateStructureUserPrompt,
@@ -21,6 +20,9 @@ import {
     isRecoverableContentOnlyErrors,
     mergeRetryFailureLists,
 } from '@/utils/characterAICreationRetry';
+import {
+    buildCharacterTemplateFromDraft as buildCharacterTemplateFromDraftUtil,
+} from '@/utils/characterAICreationApply';
 
 const JSON_REPAIR_SYSTEM_PROMPT = `你是严格 JSON 修复器。
 只输出合法 JSON，不要 markdown，不要解释。`;
@@ -106,26 +108,6 @@ function parseDraftResponse(content = '') {
     }
 
     throw new Error(`角色卡草稿 JSON 解析失败：${lastError?.message || '未知错误'}`);
-}
-
-function applyCardFieldsToTemplate(template, card = {}) {
-    const data = template.data || {};
-
-    data.name = card.name || data.name || '新角色';
-    data.description = card.description || '';
-    data.personality = card.personality || '';
-    data.scenario = card.scenario || '';
-    data.first_mes = card.first_message || '';
-    data.alternate_greetings = Array.isArray(card.alternate_greetings)
-        ? [...card.alternate_greetings]
-        : [];
-    data.creator_notes = card.creator_notes || '';
-    data.system_prompt = card.system_prompt || '';
-    data.post_history_instructions = card.post_history_instructions || '';
-    data.mes_example = card.message_example || '';
-
-    template.data = data;
-    return template;
 }
 
 function shouldFallbackWithoutResponseFormat(status, bodyText = '') {
@@ -951,19 +933,7 @@ export function useCharacterAICreation({ apiSettings, openErrorModal, showOperat
     };
 
     const buildCharacterTemplateFromDraft = (normalizedDraft) => {
-        const validation = validateCharacterDraft(normalizedDraft || {});
-        if (!validation.ok) {
-            throw new Error(validation.errors.map(item => `${item.path}: ${item.message}`).join('\n'));
-        }
-
-        const template = CharacterCardUtils.createTemplate(validation.normalized.card.name || '新角色');
-        applyCardFieldsToTemplate(template, validation.normalized.card);
-
-        return {
-            characterData: template,
-            worldbookDraft: validation.normalized.worldbookDraft,
-            warnings: validation.warnings,
-        };
+        return buildCharacterTemplateFromDraftUtil(normalizedDraft);
     };
 
     const clearDraft = () => {
