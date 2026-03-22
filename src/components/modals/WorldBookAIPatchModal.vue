@@ -113,6 +113,16 @@
                     </p>
                     <p v-if="preview.summary" class="preview-summary">{{ preview.summary }}</p>
 
+                    <div v-if="preview.planner?.targets?.length" class="planner-card">
+                        <h4>联动条目规划</h4>
+                        <ul>
+                            <li v-for="target in preview.planner.targets" :key="target.entryId">
+                                <strong>{{ target.entryId }}</strong>
+                                <span v-if="target.reason">：{{ target.reason }}</span>
+                            </li>
+                        </ul>
+                    </div>
+
                     <div v-for="item in preview.entryPreviews" :key="`${item.entryId}-${item.field}`" class="entry-preview-card">
                         <div class="entry-preview-head">
                             <div>
@@ -333,12 +343,26 @@ const selectedEntryParagraphs = computed(() => {
     line-height: 1.6;
 }
 
+.planner-card,
 .entry-preview-card {
     border: 1px solid #e7e5e4;
     border-radius: 14px;
     padding: 14px;
     background: #fcfcfb;
     margin-top: 14px;
+}
+
+.planner-card h4 {
+    margin: 0 0 10px;
+    font-size: 14px;
+    color: #292524;
+}
+
+.planner-card ul {
+    margin: 0;
+    padding-left: 18px;
+    color: #57534e;
+    line-height: 1.7;
 }
 
 .entry-preview-head {

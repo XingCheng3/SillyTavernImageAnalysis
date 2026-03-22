@@ -1,16 +1,11 @@
 import { ref } from 'vue';
 import { normalizeKeywords } from '@/utils/worldBookAIAuthoringSpec';
 import {
-    WORLD_BOOK_PATCH_ACTION,
-    WORLD_BOOK_PATCH_MODE,
-    WORLD_BOOK_PATCH_SCOPE,
     applyPatchOperationsToEntry,
     buildPatchPlanPreview,
-    createPatchInstruction,
     findWorldBookEntryIndex,
     getEntryFieldText,
     getEntryParagraphs,
-    getPatchTargetText,
     validatePatchInstruction,
     validatePatchPlan,
 } from '@/utils/worldBookAIPatchSchema';
@@ -18,177 +13,18 @@ import {
     buildWorldBookPatchSystemPrompt,
     buildWorldBookPatchUserPrompt,
 } from '@/utils/worldBookAIPatchPrompt';
+import {
+    buildWorldBookPatchPlannerSystemPrompt,
+    buildWorldBookPatchPlannerUserPrompt,
+    validateWorldBookPatchPlannerResult,
+} from '@/utils/worldBookAIPatchPlanner';
+import {
+    parseWorldBookPatchPlanResponse,
+    parseWorldBookPatchPlannerResponse,
+} from '@/utils/worldBookAIPatchResponse';
 import { buildLineDiff, summarizeLineDiff } from '@/utils/textDiffPreview';
 
-function extractJsonText(raw = '') {
-    const text = String(raw || '').trim();
-    if (!text) return '';
-
-    if (text.startsWith('{') || text.startsWith('[')) {
-        return text;
-    }
-
-    const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
-    if (fenced && fenced[1]) {
-        return fenced[1].trim();
-    }
-
-    const firstBrace = text.indexOf('{');
-    const lastBrace = text.lastIndexOf('}');
-    if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
-        return text.slice(firstBrace, lastBrace + 1);
-    }
-
-    return text;
-}
-
-function buildLegacyPlanFromReplacement(parsed = {}, validation, targetEntry) {
-    const replacement = String(parsed?.replacement ?? '').trim();
-    if (!replacement) {
-        throw new Error('AI 返回的 replacement 为空。');
-    }
-
-    const patch = createPatchInstruction({
-        ...validation.normalized,
-        replacement,
-    });
-
-    const targetText = getPatchTargetText(targetEntry, patch);
-    const base = {
-        opId: 'legacy-op-1',
-        entryId: String(targetEntry?.id ?? ''),
-        field: patch.field || 'content',
-        replacement,
-        reason: 'legacy replacement fallback',
-    };
-
-    if (patch.field !== 'content') {
-        return {
-            summary: 'legacy replacement fallback',
-            selectedEntryIds: [String(targetEntry?.id ?? '')],
-            operations: [
-                {
-                    ...base,
-                    action: WORLD_BOOK_PATCH_ACTION.REPLACE_WHOLE,
-                },
-            ],
-        };
-    }
-
-    if (patch.scope === WORLD_BOOK_PATCH_SCOPE.PARAGRAPH) {
-        if (patch.mode === WORLD_BOOK_PATCH_MODE.APPEND) {
-            return {
-                summary: 'legacy replacement fallback',
-                selectedEntryIds: [String(targetEntry?.id ?? '')],
-                operations: [
-                    {
-                        ...base,
-                        action: WORLD_BOOK_PATCH_ACTION.APPEND_AFTER_TEXT,
-                        searchText: targetText,
-                        replacement: targetText ? `\n${replacement}` : replacement,
-                        paragraphIndex: patch.paragraphIndex,
-                    },
-                ],
-            };
-        }
-
-        if (patch.mode === WORLD_BOOK_PATCH_MODE.PREPEND) {
-            return {
-                summary: 'legacy replacement fallback',
-                selectedEntryIds: [String(targetEntry?.id ?? '')],
-                operations: [
-                    {
-                        ...base,
-                        action: WORLD_BOOK_PATCH_ACTION.PREPEND_BEFORE_TEXT,
-                        searchText: targetText,
-                        replacement: targetText ? `${replacement}\n` : replacement,
-                        paragraphIndex: patch.paragraphIndex,
-                    },
-                ],
-            };
-        }
-
-        return {
-            summary: 'legacy replacement fallback',
-            selectedEntryIds: [String(targetEntry?.id ?? '')],
-            operations: [
-                {
-                    ...base,
-                    action: WORLD_BOOK_PATCH_ACTION.REPLACE_PARAGRAPH,
-                    paragraphIndex: patch.paragraphIndex,
-                },
-            ],
-        };
-    }
-
-    if (patch.mode === WORLD_BOOK_PATCH_MODE.APPEND) {
-        return {
-            summary: 'legacy replacement fallback',
-            selectedEntryIds: [String(targetEntry?.id ?? '')],
-            operations: [
-                targetText
-                    ? {
-                        ...base,
-                        action: WORLD_BOOK_PATCH_ACTION.APPEND_AFTER_TEXT,
-                        searchText: targetText,
-                        replacement: `\n\n${replacement}`,
-                    }
-                    : {
-                        ...base,
-                        action: WORLD_BOOK_PATCH_ACTION.REPLACE_WHOLE,
-                    },
-            ],
-        };
-    }
-
-    if (patch.mode === WORLD_BOOK_PATCH_MODE.PREPEND) {
-        return {
-            summary: 'legacy replacement fallback',
-            selectedEntryIds: [String(targetEntry?.id ?? '')],
-            operations: [
-                targetText
-                    ? {
-                        ...base,
-                        action: WORLD_BOOK_PATCH_ACTION.PREPEND_BEFORE_TEXT,
-                        searchText: targetText,
-                        replacement: `${replacement}\n\n`,
-                    }
-                    : {
-                        ...base,
-                        action: WORLD_BOOK_PATCH_ACTION.REPLACE_WHOLE,
-                    },
-            ],
-        };
-    }
-
-    return {
-        summary: 'legacy replacement fallback',
-        selectedEntryIds: [String(targetEntry?.id ?? '')],
-        operations: [
-            {
-                ...base,
-                action: WORLD_BOOK_PATCH_ACTION.REPLACE_WHOLE,
-            },
-        ],
-    };
-}
-
-function parsePatchResponse(content = '', { validation, targetEntry } = {}) {
-    const jsonText = extractJsonText(content);
-    if (!jsonText) {
-        throw new Error('AI 未返回有效改写结果。');
-    }
-
-    try {
-        const parsed = JSON.parse(jsonText);
-        if (parsed && typeof parsed === 'object' && typeof parsed.replacement === 'string') {
-            return buildLegacyPlanFromReplacement(parsed, validation, targetEntry);
-        }
-        return parsed;
-    } catch (error) {
-        throw new Error(`AI 改写结果解析失败：${error.message}`);
-    }
-}
+const PATCH_PLANNER_MAX_AFFECTED_ENTRIES = 6;
 
 function ensureParagraphIndexInRange(entry, patch) {
     if (patch.scope !== 'paragraph') return;
@@ -200,6 +36,100 @@ function ensureParagraphIndexInRange(entry, patch) {
     if (!Number.isFinite(patch.paragraphIndex) || patch.paragraphIndex < 0 || patch.paragraphIndex >= paragraphs.length) {
         throw new Error(`段落索引超出范围，当前条目共有 ${paragraphs.length} 段。`);
     }
+}
+
+function createEntryPreviewWithDiff(item) {
+    const lineDiff = buildLineDiff(item.beforeText, item.afterText);
+    return {
+        ...item,
+        lineDiff,
+        diffSummary: summarizeLineDiff(lineDiff),
+    };
+}
+
+async function requestChatCompletion(apiSettings, { messages, temperature = 0.4 }) {
+    const response = await fetch(`${apiSettings.value.url}/chat/completions`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${apiSettings.value.key}`,
+        },
+        body: JSON.stringify({
+            model: apiSettings.value.model,
+            temperature,
+            messages,
+        }),
+    });
+
+    if (!response.ok) {
+        const text = await response.text();
+        throw new Error(`改写请求失败（HTTP ${response.status}）：${text || response.statusText}`);
+    }
+
+    const data = await response.json();
+    return data?.choices?.[0]?.message?.content || '';
+}
+
+async function planRelatedEntries({ apiSettings, entries, targetEntry, patch }) {
+    if (!patch.allowRelatedEntries) {
+        return {
+            summary: '仅修改当前聚焦条目',
+            selectedEntryIds: [String(targetEntry.id)],
+            targets: [{ entryId: String(targetEntry.id), reason: 'focus entry' }],
+        };
+    }
+
+    const plannerContent = await requestChatCompletion(apiSettings, {
+        temperature: 0.2,
+        messages: [
+            { role: 'system', content: buildWorldBookPatchPlannerSystemPrompt() },
+            {
+                role: 'user',
+                content: buildWorldBookPatchPlannerUserPrompt({
+                    entries,
+                    focusEntry: targetEntry,
+                    patch,
+                    maxAffectedEntries: PATCH_PLANNER_MAX_AFFECTED_ENTRIES,
+                }),
+            },
+        ],
+    });
+
+    const parsedPlanner = parseWorldBookPatchPlannerResponse(plannerContent);
+    const plannerValidation = validateWorldBookPatchPlannerResult(parsedPlanner, {
+        entries,
+        focusEntryId: patch.entryId,
+        allowRelatedEntries: patch.allowRelatedEntries,
+        maxAffectedEntries: PATCH_PLANNER_MAX_AFFECTED_ENTRIES,
+    });
+
+    if (!plannerValidation.ok) {
+        throw new Error(plannerValidation.errors.map(item => item.message).join('\n'));
+    }
+
+    return plannerValidation.normalized;
+}
+
+function getPlannedEntries(entries = [], planner = { selectedEntryIds: [] }) {
+    const selectedIds = new Set((planner.selectedEntryIds || []).map(item => String(item)));
+    return (entries || []).filter(entry => selectedIds.has(String(entry?.id ?? '')));
+}
+
+function buildPatchPreviewPayload(entries, planValidation, planner) {
+    const preview = buildPatchPlanPreview(entries, planValidation.normalized.operations);
+    const entryPreviews = preview.entryPreviews.map(createEntryPreviewWithDiff);
+
+    return {
+        summary: planValidation.normalized.summary || planner?.summary || '',
+        selectedEntryIds: planner?.selectedEntryIds || planValidation.normalized.selectedEntryIds,
+        planner,
+        operationCount: preview.operationCount,
+        affectedEntryIds: preview.affectedEntryIds,
+        affectedEntryCount: preview.affectedEntryCount,
+        entryPreviews,
+        plan: planValidation.normalized,
+        changed: entryPreviews.some(item => item.changed),
+    };
 }
 
 export function useWorldBookAIPatch({ apiSettings, openErrorModal, showOperationNotice }) {
@@ -228,74 +158,48 @@ export function useWorldBookAIPatch({ apiSettings, openErrorModal, showOperation
 
         const targetEntry = entries[targetIndex];
         ensureParagraphIndexInRange(targetEntry, validation.normalized);
-
         isPatching.value = true;
 
         try {
-            const response = await fetch(`${apiSettings.value.url}/chat/completions`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${apiSettings.value.key}`,
-                },
-                body: JSON.stringify({
-                    model: apiSettings.value.model,
-                    temperature: 0.4,
-                    messages: [
-                        { role: 'system', content: buildWorldBookPatchSystemPrompt() },
-                        {
-                            role: 'user',
-                            content: buildWorldBookPatchUserPrompt({
-                                entries,
-                                focusEntry: targetEntry,
-                                patch: validation.normalized,
-                            }),
-                        },
-                    ],
-                }),
+            const planner = await planRelatedEntries({
+                apiSettings,
+                entries,
+                targetEntry,
+                patch: validation.normalized,
+            });
+            const plannedEntries = getPlannedEntries(entries, planner);
+
+            const patchContent = await requestChatCompletion(apiSettings, {
+                temperature: 0.4,
+                messages: [
+                    { role: 'system', content: buildWorldBookPatchSystemPrompt() },
+                    {
+                        role: 'user',
+                        content: buildWorldBookPatchUserPrompt({
+                            entries: plannedEntries,
+                            focusEntry: targetEntry,
+                            patch: validation.normalized,
+                            planner,
+                        }),
+                    },
+                ],
             });
 
-            if (!response.ok) {
-                const text = await response.text();
-                throw new Error(`改写请求失败（HTTP ${response.status}）：${text || response.statusText}`);
-            }
-
-            const data = await response.json();
-            const content = data?.choices?.[0]?.message?.content || '';
-            const parsedPlan = parsePatchResponse(content, {
+            const parsedPlan = parseWorldBookPatchPlanResponse(patchContent, {
                 validation,
                 targetEntry,
             });
-
             const planValidation = validatePatchPlan(parsedPlan, {
                 entries,
                 focusEntryId: validation.normalized.entryId,
                 allowRelatedEntries: validation.normalized.allowRelatedEntries,
+                allowedEntryIds: planner.selectedEntryIds,
             });
             if (!planValidation.ok) {
                 throw new Error(planValidation.errors.map(item => item.message).join('\n'));
             }
 
-            const preview = buildPatchPlanPreview(entries, planValidation.normalized.operations);
-            const entryPreviews = preview.entryPreviews.map((item) => {
-                const lineDiff = buildLineDiff(item.beforeText, item.afterText);
-                return {
-                    ...item,
-                    lineDiff,
-                    diffSummary: summarizeLineDiff(lineDiff),
-                };
-            });
-
-            patchPreview.value = {
-                summary: planValidation.normalized.summary,
-                selectedEntryIds: planValidation.normalized.selectedEntryIds,
-                operationCount: preview.operationCount,
-                affectedEntryIds: preview.affectedEntryIds,
-                affectedEntryCount: preview.affectedEntryCount,
-                entryPreviews,
-                plan: planValidation.normalized,
-                changed: entryPreviews.some(item => item.changed),
-            };
+            patchPreview.value = buildPatchPreviewPayload(entries, planValidation, planner);
 
             if (!patchPreview.value.changed) {
                 showOperationNotice?.({
@@ -308,8 +212,8 @@ export function useWorldBookAIPatch({ apiSettings, openErrorModal, showOperation
                 showOperationNotice?.({
                     type: 'success',
                     title: '改写预览已生成',
-                    message: `涉及 ${patchPreview.value.affectedEntryCount} 个条目，${patchPreview.value.operationCount} 个 patch 操作。`,
-                    duration: 3500,
+                    message: `planner 选中 ${planner.selectedEntryIds.length} 个条目，生成 ${patchPreview.value.operationCount} 个 patch 操作。`,
+                    duration: 3800,
                 });
             }
 

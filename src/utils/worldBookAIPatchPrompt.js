@@ -60,6 +60,7 @@ export function buildWorldBookPatchUserPrompt({
     entries = [],
     focusEntry = null,
     patch,
+    planner = null,
 }) {
     const digests = (entries || []).map((entry, index) => createEntryDigest(entry, index));
     const focusDigest = focusEntry
@@ -89,6 +90,13 @@ export function buildWorldBookPatchUserPrompt({
             avoidWholeRewriteUnlessNecessary: true,
         },
         focusEntry: focusDigest,
+        plannerResult: planner
+            ? {
+                summary: planner.summary || '',
+                selectedEntryIds: planner.selectedEntryIds || [],
+                targets: planner.targets || [],
+            }
+            : undefined,
         entryCatalog: digests.map(({ entryId, index, title, keysText, excerpt, paragraphCount }) => ({
             entryId,
             index,
@@ -97,16 +105,14 @@ export function buildWorldBookPatchUserPrompt({
             excerpt,
             paragraphCount,
         })),
-        entryDetails: allowRelatedEntries
-            ? digests.map(({ entryId, index, title, keysText, content, paragraphCount }) => ({
-                entryId,
-                index,
-                title,
-                keysText,
-                paragraphCount,
-                content,
-            }))
-            : undefined,
+        entryDetails: digests.map(({ entryId, index, title, keysText, content, paragraphCount }) => ({
+            entryId,
+            index,
+            title,
+            keysText,
+            paragraphCount,
+            content,
+        })),
         output: {
             format: 'json',
             schema: {

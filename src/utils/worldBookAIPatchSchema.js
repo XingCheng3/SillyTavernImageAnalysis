@@ -202,6 +202,17 @@ export function validatePatchOperation(raw = {}, options = {}) {
         });
     }
 
+    if (Array.isArray(options.allowedEntryIds) && options.allowedEntryIds.length > 0 && operation.entryId) {
+        const allowed = new Set(options.allowedEntryIds.map(item => normalizeString(item)).filter(Boolean));
+        if (!allowed.has(operation.entryId)) {
+            errors.push({
+                code: 'PATCH_OPERATION_ENTRY_NOT_SELECTED',
+                message: `patch operation 修改了未选中的条目：${operation.entryId}`,
+                path: 'entryId',
+            });
+        }
+    }
+
     if (Array.isArray(options.entries) && operation.entryId) {
         const targetIndex = findWorldBookEntryIndex(options.entries, operation.entryId);
         if (targetIndex < 0) {

@@ -33,7 +33,7 @@
     "preview": "vite preview",
     "lint": "eslint src --ext .js,.vue",
     "test:parser": "node tests/characterCardParser.test.js",
-    "test:worldbook-ai": "node tests/worldBookAIGeneration.test.js",
+    "test:worldbook-ai": "node tests/worldBookAIGeneration.test.js && node tests/worldBookAIPatchPlanner.test.js",
     "test:character-ai": "node tests/characterAICreation.test.js",
     "test:all": "npm run test:parser && npm run test:worldbook-ai && npm run test:character-ai"
   },
