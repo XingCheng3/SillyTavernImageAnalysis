@@ -578,12 +578,14 @@ function normalizeEditableBookEntry(entry, index) {
 
 function bookEntryToCharacterBookEntry(entry, index) {
     const normalized = normalizeEditableBookEntry(entry, index);
+    const entryTitle = normalized.name ?? normalized.comment ?? `条目 ${index + 1}`;
 
     return {
         id: normalized.id,
         keys: normalized.keys,
         secondary_keys: normalized.secondary_keys,
-        comment: normalized.comment,
+        name: entryTitle,
+        comment: entryTitle,
         content: normalized.content,
         constant: normalized.constant,
         selective: normalized.selective,

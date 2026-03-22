@@ -194,6 +194,32 @@ async function testV2RoundTripKeepsCharacterBook() {
     assert.equal(parsed.data.data.lore, undefined, 'V2 导出不应带 lore');
 }
 
+async function testV2EditedEntryTitlePersistsThroughExport() {
+    const card = normalizeCharacterData(mockV2CharacterData);
+    card.data.book_entries = [
+        {
+            id: 3,
+            name: '翻译后的标题B',
+            comment: '原始标题A',
+            keys: ['办公室', '标题测试'],
+            secondary_keys: [],
+            content: '用于验证标题导出是否真正写回 character_book。',
+            enabled: true,
+            insertion_order: 1,
+            position: 'after_char',
+        },
+    ];
+
+    const parsed = await roundTrip(card);
+    const entry = parsed.data.data.character_book.entries[0];
+    const editable = buildEditableCharacterData(parsed.data);
+
+    assert.equal(entry.comment, '翻译后的标题B', 'V2 导出应把编辑后的标题写回 comment');
+    assert.equal(entry.name, '翻译后的标题B', 'V2 导出应同步写入 name 以提升兼容性');
+    assert.equal(editable.book_entries[0].name, '翻译后的标题B', '重新导入后标题不应回退到旧值');
+    assert.equal(editable.book_entries[0].comment, '翻译后的标题B', '重新导入后 comment 也应与导出标题一致');
+}
+
 async function testJsonImportRoundTrip() {
     const parsed = CharacterCardUtils.parseJson(JSON.stringify(clone(mockV3CharacterData)));
     assert.equal(parsed.success, true);
@@ -304,6 +330,9 @@ async function runAllTests() {
 
     await testV2RoundTripKeepsCharacterBook();
     console.log('✓ V2 round-trip 保持 character_book');
+
+    await testV2EditedEntryTitlePersistsThroughExport();
+    console.log('✓ V2 世界书条目标题导出可正确持久化');
 
     await testJsonImportRoundTrip();
     console.log('✓ JSON 导入可接入统一闭环');
