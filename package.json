@@ -1,8 +1,30 @@
 {
   "name": "sillytavern-image-analysis",
   "version": "1.0.0",
+  "description": "Local-first workspace for SillyTavern character cards and lorebooks with editing, AI translation, AI generation, patching, and PNG export.",
   "private": true,
   "type": "module",
+  "license": "AGPL-3.0-only",
+  "homepage": "https://github.com/XingCheng3/SillyTavernImageAnalysis#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/XingCheng3/SillyTavernImageAnalysis.git"
+  },
+  "bugs": {
+    "url": "https://github.com/XingCheng3/SillyTavernImageAnalysis/issues"
+  },
+  "keywords": [
+    "sillytavern",
+    "character-card",
+    "lorebook",
+    "worldbook",
+    "png",
+    "ai-translation",
+    "ai-generation",
+    "vue3",
+    "vite",
+    "local-first"
+  ],
   "scripts": {
     "dev": "vite",
     "build": "vite build && sh ./scripts/deploy-bt.sh",
