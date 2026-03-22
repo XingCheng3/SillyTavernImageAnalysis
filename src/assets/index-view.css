@@ -138,6 +138,10 @@ h1 {
   font-size: 15px;
 }
 
+.hidden {
+  display: none !important;
+}
+
 .upload-area,
 .results,
 .json-editor,
