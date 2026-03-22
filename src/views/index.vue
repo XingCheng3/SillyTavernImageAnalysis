@@ -8,6 +8,7 @@
             </div>
 
             <div class="header-buttons">
+                <span class="version-chip">当前版本 {{ currentVersion.toUpperCase() }}</span>
                 <button type="button" @click="showChangelogModal = true" class="tool-button">更新日志</button>
             </div>
         </div>
@@ -322,6 +323,7 @@ import BatchTranslateModal from '@/components/modals/BatchTranslateModal.vue';
 import BookBatchTranslateModal from '@/components/modals/BookBatchTranslateModal.vue';
 import CharacterAICreateModal from '@/components/modals/CharacterAICreateModal.vue';
 import ChangelogModal from '@/components/modals/ChangelogModal.vue';
+import { CHANGELOG_ENTRIES, CURRENT_VERSION } from '@/data/changelog';
 import WorldBookAIGenerateModal from '@/components/modals/WorldBookAIGenerateModal.vue';
 import WorldBookAIPatchModal from '@/components/modals/WorldBookAIPatchModal.vue';
 import AdvancedBatchTranslateModal from '@/components/modals/AdvancedBatchTranslateModal.vue';
@@ -403,11 +405,8 @@ const showPromptModal = ref(false);
 const showJailbreakModal = ref(false);
 const showCharacterAICreateModal = ref(false);
 const showChangelogModal = ref(false);
-const changelogEntries = Object.freeze([
-    { time: '2026-03-22 20:02', version: 'v1.03', summary: '新增更新日志按钮与弹窗。' },
-    { time: '2026-03-22 19:58', version: 'v1.02', summary: '修复世界书条目标题导出。' },
-    { time: '2026-03-22 19:21', version: 'v1.01', summary: '整理 README 与仓库说明。' },
-]);
+const currentVersion = CURRENT_VERSION;
+const changelogEntries = CHANGELOG_ENTRIES;
 const characterAICreateForm = reactive({
     corePrompt: '',
     genre: '',

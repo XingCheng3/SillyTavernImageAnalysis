@@ -86,6 +86,21 @@ h1 {
   margin-left: auto;
 }
 
+.version-chip {
+  display: inline-flex;
+  align-items: center;
+  min-height: 42px;
+  padding: 10px 14px;
+  border-radius: 999px;
+  border: 1px solid var(--line-soft);
+  background: linear-gradient(180deg, #ffffff 0%, #f8f6f1 100%);
+  color: var(--text-2);
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: 0.03em;
+  box-shadow: var(--shadow-sm);
+}
+
 .config-button,
 .settings-button,
 .upload-button,
