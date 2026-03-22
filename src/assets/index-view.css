@@ -83,6 +83,7 @@ h1 {
   gap: 12px;
   flex-wrap: wrap;
   justify-content: flex-end;
+  margin-left: auto;
 }
 
 .config-button,

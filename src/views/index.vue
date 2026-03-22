@@ -6,6 +6,10 @@
                 <h1>角色卡解析翻译器</h1>
                 <p class="page-subtitle">面向长文本角色卡与世界书的编辑、翻译、快照和导出工作台。</p>
             </div>
+
+            <div class="header-buttons">
+                <button type="button" @click="showChangelogModal = true" class="tool-button">更新日志</button>
+            </div>
         </div>
 
         <NotificationBanner
@@ -156,6 +160,7 @@
             @apply="handleApplyCharacterAIDraft"
         />
 
+        <ChangelogModal :show="showChangelogModal" :entries="changelogEntries" @close="showChangelogModal = false" />
         <SettingsModal :show="showSettingsModal" @close="showSettingsModal = false" @save="handleSaveSettings" />
         
         <!-- 翻译提示词模态框 -->
@@ -316,6 +321,7 @@ import TranslationCompareModal from '../components/TranslationCompareModal.vue';
 import BatchTranslateModal from '@/components/modals/BatchTranslateModal.vue';
 import BookBatchTranslateModal from '@/components/modals/BookBatchTranslateModal.vue';
 import CharacterAICreateModal from '@/components/modals/CharacterAICreateModal.vue';
+import ChangelogModal from '@/components/modals/ChangelogModal.vue';
 import WorldBookAIGenerateModal from '@/components/modals/WorldBookAIGenerateModal.vue';
 import WorldBookAIPatchModal from '@/components/modals/WorldBookAIPatchModal.vue';
 import AdvancedBatchTranslateModal from '@/components/modals/AdvancedBatchTranslateModal.vue';
@@ -396,6 +402,12 @@ const showSettingsModal = ref(false);
 const showPromptModal = ref(false);
 const showJailbreakModal = ref(false);
 const showCharacterAICreateModal = ref(false);
+const showChangelogModal = ref(false);
+const changelogEntries = Object.freeze([
+    { time: '2026-03-22 20:02', version: 'v1.03', summary: '新增更新日志按钮与弹窗。' },
+    { time: '2026-03-22 19:58', version: 'v1.02', summary: '修复世界书条目标题导出。' },
+    { time: '2026-03-22 19:21', version: 'v1.01', summary: '整理 README 与仓库说明。' },
+]);
 const characterAICreateForm = reactive({
     corePrompt: '',
     genre: '',
