@@ -460,6 +460,7 @@ const worldBookAIPatchForm = reactive({
     paragraphIndex: 0,
     instruction: '',
     keepStyle: true,
+    allowRelatedEntries: false,
     confirmReviewedDiff: false,
 });
 
@@ -535,6 +536,7 @@ watch(
         worldBookAIPatchForm.paragraphIndex,
         worldBookAIPatchForm.instruction,
         worldBookAIPatchForm.keepStyle,
+        worldBookAIPatchForm.allowRelatedEntries,
     ],
     () => {
         if (worldBookAIPatchPreview.value) {
@@ -1300,9 +1302,9 @@ const handleApplyWorldBookAIPatch = () => {
         const result = applyPatchPreviewToEditableData(editableData.value, worldBookAIPatchPreview.value);
 
         showOperationNotice({
-            type: result.changed ? 'success' : 'warning',
-            title: result.changed ? '已应用 AI 局部改写' : '已应用改写（内容无变化）',
-            message: `条目：${result.entryTitle}，字段：${result.field}`,
+            type: result.changedCount > 0 ? 'success' : 'warning',
+            title: result.changedCount > 0 ? '已应用 AI 局部改写' : '已应用改写（内容无变化）',
+            message: `涉及 ${result.affectedEntryCount} 个条目，执行 ${result.operationCount} 个 patch 操作。`,
             duration: 4200,
         });
 

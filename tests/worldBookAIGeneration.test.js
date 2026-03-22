@@ -14,13 +14,21 @@ import {
     validateWorldBookGenerationDraft,
 } from '../src/utils/worldBookAIGenerationValidator.js';
 import {
+    WORLD_BOOK_PATCH_ACTION,
     WORLD_BOOK_PATCH_MODE,
     WORLD_BOOK_PATCH_SCOPE,
     applyLocalPatchToEntry,
+    applyPatchOperationsToEntry,
+    buildPatchPlanPreview,
     findWorldBookEntryIndex,
     getPatchTargetText,
     validatePatchInstruction,
+    validatePatchPlan,
 } from '../src/utils/worldBookAIPatchSchema.js';
+import {
+    TEXT_PATCH_ACTION,
+    applyTextPatchOperation,
+} from '../src/utils/structuredTextPatch.js';
 import { buildLineDiff, summarizeLineDiff } from '../src/utils/textDiffPreview.js';
 
 function testLightInferenceAndApply() {
@@ -233,6 +241,106 @@ function testPatchHelpers() {
     assert.equal(target, '第二段。');
 }
 
+function testStructuredTextPatchRequiresDisambiguation() {
+    assert.throws(() => {
+        applyTextPatchOperation('关键词A，关键词A，关键词A', {
+            action: TEXT_PATCH_ACTION.REPLACE_TEXT,
+            searchText: '关键词A',
+            replacement: '关键词B',
+        });
+    }, /occurrence|anchors/);
+
+    const patched = applyTextPatchOperation('关键词A，关键词A，关键词A', {
+        action: TEXT_PATCH_ACTION.REPLACE_TEXT,
+        searchText: '关键词A',
+        replacement: '关键词B',
+        occurrence: 2,
+    });
+    assert.equal(patched, '关键词A，关键词B，关键词A');
+}
+
+function testPatchPlanValidationAndPreview() {
+    const entries = [
+        {
+            id: 11,
+            name: '帝国军纪',
+            keysText: '帝国, 军纪',
+            content: '帝国军纪极严。\n\n任何越级行为都会被立即处决。',
+        },
+        {
+            id: 12,
+            name: '贵族特权',
+            keysText: '帝国, 贵族',
+            content: '帝国贵族拥有极高豁免权。',
+        },
+    ];
+
+    const validation = validatePatchPlan({
+        summary: '同步放宽军纪与贵族处罚描述',
+        selectedEntryIds: ['11', '12'],
+        operations: [
+            {
+                opId: 'op_1',
+                entryId: '11',
+                field: 'content',
+                action: WORLD_BOOK_PATCH_ACTION.REPLACE_TEXT,
+                searchText: '立即处决',
+                replacement: '视情节监禁',
+            },
+            {
+                opId: 'op_2',
+                entryId: '12',
+                field: 'content',
+                action: WORLD_BOOK_PATCH_ACTION.APPEND_AFTER_TEXT,
+                searchText: '豁免权。',
+                replacement: '\n但近年军法改革后，部分特权已被收回。',
+            },
+        ],
+    }, {
+        entries,
+        focusEntryId: '11',
+        allowRelatedEntries: true,
+    });
+
+    assert.equal(validation.ok, true);
+
+    const preview = buildPatchPlanPreview(entries, validation.normalized.operations);
+    assert.equal(preview.affectedEntryCount, 2);
+    assert.equal(preview.operationCount, 2);
+    assert.equal(preview.entryPreviews[0].afterText.includes('视情节监禁'), true);
+    assert.equal(preview.entryPreviews[1].afterText.includes('部分特权已被收回'), true);
+}
+
+function testPatchOperationsApplyToEntry() {
+    const entry = {
+        id: 11,
+        name: '帝国军纪',
+        content: '帝国军纪极严。\n\n任何越级行为都会被立即处决。',
+    };
+
+    const nextEntry = applyPatchOperationsToEntry(entry, [
+        {
+            opId: 'op_1',
+            entryId: '11',
+            field: 'content',
+            action: WORLD_BOOK_PATCH_ACTION.REPLACE_TEXT,
+            searchText: '极严',
+            replacement: '更重视秩序但保留裁量',
+        },
+        {
+            opId: 'op_2',
+            entryId: '11',
+            field: 'content',
+            action: WORLD_BOOK_PATCH_ACTION.REPLACE_TEXT,
+            searchText: '立即处决',
+            replacement: '军法审议后判罚',
+        },
+    ]);
+
+    assert.equal(nextEntry.content.includes('更重视秩序但保留裁量'), true);
+    assert.equal(nextEntry.content.includes('军法审议后判罚'), true);
+}
+
 function testLineDiffPreview() {
     const diff = buildLineDiff('第一行\n第二行\n第三行', '第一行\n第二行(改)\n第三行\n第四行');
     const summary = summarizeLineDiff(diff);
@@ -265,6 +373,15 @@ function runAllTests() {
 
     testPatchHelpers();
     console.log('✓ 局部改写辅助能力正确');
+
+    testStructuredTextPatchRequiresDisambiguation();
+    console.log('✓ 最小文本 patch 歧义保护正确');
+
+    testPatchPlanValidationAndPreview();
+    console.log('✓ 多条目 patch plan 校验与预览正确');
+
+    testPatchOperationsApplyToEntry();
+    console.log('✓ 多 operation 顺序应用正确');
 
     testLineDiffPreview();
     console.log('✓ 行级差异预览能力正确');

@@ -90,10 +90,16 @@
                         </label>
                     </div>
 
-                    <label class="replace-switch">
-                        <input type="checkbox" v-model="form.keepStyle" />
-                        <span>尽量保留原文风格</span>
-                    </label>
+                    <div class="switch-stack">
+                        <label class="replace-switch">
+                            <input type="checkbox" v-model="form.keepStyle" />
+                            <span>尽量保留原文风格</span>
+                        </label>
+                        <label class="replace-switch">
+                            <input type="checkbox" v-model="form.allowRelatedEntries" />
+                            <span>允许联动修改相关条目（实验中）</span>
+                        </label>
+                    </div>
                 </div>
 
                 <div v-if="preview" class="section-card preview-card">
@@ -102,40 +108,51 @@
                         <span class="count-chip">{{ preview.changed ? '有变化' : '无变化' }}</span>
                     </div>
                     <p class="book-meta">
-                        条目：<strong>{{ preview.entryTitle }}</strong>
-                        ｜字段：<strong>{{ preview.patch.field }}</strong>
+                        涉及 <strong>{{ preview.affectedEntryCount }}</strong> 个条目
+                        ｜<strong>{{ preview.operationCount }}</strong> 个 patch 操作
                     </p>
+                    <p v-if="preview.summary" class="preview-summary">{{ preview.summary }}</p>
 
-                    <div class="diff-grid">
-                        <div class="diff-col">
-                            <h4>改写前</h4>
-                            <textarea class="diff-text" readonly :value="preview.beforeText"></textarea>
+                    <div v-for="item in preview.entryPreviews" :key="`${item.entryId}-${item.field}`" class="entry-preview-card">
+                        <div class="entry-preview-head">
+                            <div>
+                                <strong>{{ item.entryTitle }}</strong>
+                                <p>字段：{{ item.field }} ｜ 操作数：{{ item.operations?.length || 0 }}</p>
+                            </div>
+                            <span class="count-chip small">{{ item.changed ? '已变更' : '无变化' }}</span>
                         </div>
-                        <div class="diff-col">
-                            <h4>改写后</h4>
-                            <textarea class="diff-text" readonly :value="preview.afterText"></textarea>
-                        </div>
-                    </div>
 
-                    <div class="diff-summary" v-if="preview.diffSummary">
-                        <span class="chip add">+{{ preview.diffSummary.add }} 新增行</span>
-                        <span class="chip remove">-{{ preview.diffSummary.remove }} 删除行</span>
-                        <span class="chip context">={{ preview.diffSummary.context }} 相同行</span>
-                    </div>
-
-                    <div class="line-diff" v-if="preview.lineDiff?.lines?.length">
-                        <div
-                            v-for="(line, idx) in preview.lineDiff.lines"
-                            :key="`${line.type}-${idx}`"
-                            class="line-item"
-                            :class="line.type"
-                        >
-                            <span class="marker">{{ line.type === 'add' ? '+' : line.type === 'remove' ? '-' : '·' }}</span>
-                            <span class="text">{{ line.text || ' ' }}</span>
+                        <div class="diff-grid">
+                            <div class="diff-col">
+                                <h4>改写前</h4>
+                                <textarea class="diff-text" readonly :value="item.beforeText"></textarea>
+                            </div>
+                            <div class="diff-col">
+                                <h4>改写后</h4>
+                                <textarea class="diff-text" readonly :value="item.afterText"></textarea>
+                            </div>
                         </div>
-                        <p v-if="preview.lineDiff.truncated" class="diff-truncated-tip">
-                            仅展示前 {{ preview.lineDiff.lines.length }} 行差异（总计 {{ preview.lineDiff.total }} 行）。
-                        </p>
+
+                        <div class="diff-summary" v-if="item.diffSummary">
+                            <span class="chip add">+{{ item.diffSummary.add }} 新增行</span>
+                            <span class="chip remove">-{{ item.diffSummary.remove }} 删除行</span>
+                            <span class="chip context">={{ item.diffSummary.context }} 相同行</span>
+                        </div>
+
+                        <div class="line-diff" v-if="item.lineDiff?.lines?.length">
+                            <div
+                                v-for="(line, idx) in item.lineDiff.lines"
+                                :key="`${item.entryId}-${item.field}-${line.type}-${idx}`"
+                                class="line-item"
+                                :class="line.type"
+                            >
+                                <span class="marker">{{ line.type === 'add' ? '+' : line.type === 'remove' ? '-' : '·' }}</span>
+                                <span class="text">{{ line.text || ' ' }}</span>
+                            </div>
+                            <p v-if="item.lineDiff.truncated" class="diff-truncated-tip">
+                                仅展示前 {{ item.lineDiff.lines.length }} 行差异（总计 {{ item.lineDiff.total }} 行）。
+                            </p>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -269,8 +286,14 @@ const selectedEntryParagraphs = computed(() => {
     color: #a8a29e;
 }
 
-.replace-switch {
+.switch-stack {
     margin-top: 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.replace-switch {
     display: inline-flex;
     align-items: center;
     gap: 8px;
@@ -299,9 +322,43 @@ const selectedEntryParagraphs = computed(() => {
 }
 
 .book-meta {
-    margin: 0 0 12px;
+    margin: 0 0 8px;
     color: #57534e;
     font-size: 13px;
+}
+
+.preview-summary {
+    margin: 0 0 14px;
+    color: #44403c;
+    line-height: 1.6;
+}
+
+.entry-preview-card {
+    border: 1px solid #e7e5e4;
+    border-radius: 14px;
+    padding: 14px;
+    background: #fcfcfb;
+    margin-top: 14px;
+}
+
+.entry-preview-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 12px;
+}
+
+.entry-preview-head p {
+    margin: 4px 0 0;
+    color: #78716c;
+    font-size: 12px;
+}
+
+.count-chip.small {
+    height: 24px;
+    padding: 0 8px;
+    font-size: 11px;
 }
 
 .diff-grid {

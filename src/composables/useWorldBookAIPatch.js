@@ -1,12 +1,18 @@
 import { ref } from 'vue';
 import { normalizeKeywords } from '@/utils/worldBookAIAuthoringSpec';
 import {
-    buildPatchPreview,
+    WORLD_BOOK_PATCH_ACTION,
+    WORLD_BOOK_PATCH_MODE,
+    WORLD_BOOK_PATCH_SCOPE,
+    applyPatchOperationsToEntry,
+    buildPatchPlanPreview,
     createPatchInstruction,
     findWorldBookEntryIndex,
-    getPatchTargetText,
+    getEntryFieldText,
     getEntryParagraphs,
+    getPatchTargetText,
     validatePatchInstruction,
+    validatePatchPlan,
 } from '@/utils/worldBookAIPatchSchema';
 import {
     buildWorldBookPatchSystemPrompt,
@@ -36,7 +42,138 @@ function extractJsonText(raw = '') {
     return text;
 }
 
-function parsePatchResponse(content = '') {
+function buildLegacyPlanFromReplacement(parsed = {}, validation, targetEntry) {
+    const replacement = String(parsed?.replacement ?? '').trim();
+    if (!replacement) {
+        throw new Error('AI 返回的 replacement 为空。');
+    }
+
+    const patch = createPatchInstruction({
+        ...validation.normalized,
+        replacement,
+    });
+
+    const targetText = getPatchTargetText(targetEntry, patch);
+    const base = {
+        opId: 'legacy-op-1',
+        entryId: String(targetEntry?.id ?? ''),
+        field: patch.field || 'content',
+        replacement,
+        reason: 'legacy replacement fallback',
+    };
+
+    if (patch.field !== 'content') {
+        return {
+            summary: 'legacy replacement fallback',
+            selectedEntryIds: [String(targetEntry?.id ?? '')],
+            operations: [
+                {
+                    ...base,
+                    action: WORLD_BOOK_PATCH_ACTION.REPLACE_WHOLE,
+                },
+            ],
+        };
+    }
+
+    if (patch.scope === WORLD_BOOK_PATCH_SCOPE.PARAGRAPH) {
+        if (patch.mode === WORLD_BOOK_PATCH_MODE.APPEND) {
+            return {
+                summary: 'legacy replacement fallback',
+                selectedEntryIds: [String(targetEntry?.id ?? '')],
+                operations: [
+                    {
+                        ...base,
+                        action: WORLD_BOOK_PATCH_ACTION.APPEND_AFTER_TEXT,
+                        searchText: targetText,
+                        replacement: targetText ? `\n${replacement}` : replacement,
+                        paragraphIndex: patch.paragraphIndex,
+                    },
+                ],
+            };
+        }
+
+        if (patch.mode === WORLD_BOOK_PATCH_MODE.PREPEND) {
+            return {
+                summary: 'legacy replacement fallback',
+                selectedEntryIds: [String(targetEntry?.id ?? '')],
+                operations: [
+                    {
+                        ...base,
+                        action: WORLD_BOOK_PATCH_ACTION.PREPEND_BEFORE_TEXT,
+                        searchText: targetText,
+                        replacement: targetText ? `${replacement}\n` : replacement,
+                        paragraphIndex: patch.paragraphIndex,
+                    },
+                ],
+            };
+        }
+
+        return {
+            summary: 'legacy replacement fallback',
+            selectedEntryIds: [String(targetEntry?.id ?? '')],
+            operations: [
+                {
+                    ...base,
+                    action: WORLD_BOOK_PATCH_ACTION.REPLACE_PARAGRAPH,
+                    paragraphIndex: patch.paragraphIndex,
+                },
+            ],
+        };
+    }
+
+    if (patch.mode === WORLD_BOOK_PATCH_MODE.APPEND) {
+        return {
+            summary: 'legacy replacement fallback',
+            selectedEntryIds: [String(targetEntry?.id ?? '')],
+            operations: [
+                targetText
+                    ? {
+                        ...base,
+                        action: WORLD_BOOK_PATCH_ACTION.APPEND_AFTER_TEXT,
+                        searchText: targetText,
+                        replacement: `\n\n${replacement}`,
+                    }
+                    : {
+                        ...base,
+                        action: WORLD_BOOK_PATCH_ACTION.REPLACE_WHOLE,
+                    },
+            ],
+        };
+    }
+
+    if (patch.mode === WORLD_BOOK_PATCH_MODE.PREPEND) {
+        return {
+            summary: 'legacy replacement fallback',
+            selectedEntryIds: [String(targetEntry?.id ?? '')],
+            operations: [
+                targetText
+                    ? {
+                        ...base,
+                        action: WORLD_BOOK_PATCH_ACTION.PREPEND_BEFORE_TEXT,
+                        searchText: targetText,
+                        replacement: `${replacement}\n\n`,
+                    }
+                    : {
+                        ...base,
+                        action: WORLD_BOOK_PATCH_ACTION.REPLACE_WHOLE,
+                    },
+            ],
+        };
+    }
+
+    return {
+        summary: 'legacy replacement fallback',
+        selectedEntryIds: [String(targetEntry?.id ?? '')],
+        operations: [
+            {
+                ...base,
+                action: WORLD_BOOK_PATCH_ACTION.REPLACE_WHOLE,
+            },
+        ],
+    };
+}
+
+function parsePatchResponse(content = '', { validation, targetEntry } = {}) {
     const jsonText = extractJsonText(content);
     if (!jsonText) {
         throw new Error('AI 未返回有效改写结果。');
@@ -44,11 +181,10 @@ function parsePatchResponse(content = '') {
 
     try {
         const parsed = JSON.parse(jsonText);
-        const replacement = String(parsed?.replacement ?? '').trim();
-        if (!replacement) {
-            throw new Error('AI 返回的 replacement 为空。');
+        if (parsed && typeof parsed === 'object' && typeof parsed.replacement === 'string') {
+            return buildLegacyPlanFromReplacement(parsed, validation, targetEntry);
         }
-        return replacement;
+        return parsed;
     } catch (error) {
         throw new Error(`AI 改写结果解析失败：${error.message}`);
     }
@@ -93,11 +229,6 @@ export function useWorldBookAIPatch({ apiSettings, openErrorModal, showOperation
         const targetEntry = entries[targetIndex];
         ensureParagraphIndexInRange(targetEntry, validation.normalized);
 
-        const targetText = getPatchTargetText(targetEntry, validation.normalized);
-        if (!targetText) {
-            throw new Error('目标内容为空，无法执行 AI 改写。');
-        }
-
         isPatching.value = true;
 
         try {
@@ -109,15 +240,15 @@ export function useWorldBookAIPatch({ apiSettings, openErrorModal, showOperation
                 },
                 body: JSON.stringify({
                     model: apiSettings.value.model,
-                    temperature: 0.7,
+                    temperature: 0.4,
                     messages: [
                         { role: 'system', content: buildWorldBookPatchSystemPrompt() },
                         {
                             role: 'user',
                             content: buildWorldBookPatchUserPrompt({
-                                entry: targetEntry,
+                                entries,
+                                focusEntry: targetEntry,
                                 patch: validation.normalized,
-                                targetText,
                             }),
                         },
                     ],
@@ -131,29 +262,42 @@ export function useWorldBookAIPatch({ apiSettings, openErrorModal, showOperation
 
             const data = await response.json();
             const content = data?.choices?.[0]?.message?.content || '';
-            const replacement = parsePatchResponse(content);
-
-            const mergedPatch = createPatchInstruction({
-                ...validation.normalized,
-                replacement,
+            const parsedPlan = parsePatchResponse(content, {
+                validation,
+                targetEntry,
             });
 
-            const preview = buildPatchPreview(targetEntry, mergedPatch);
-            const lineDiff = buildLineDiff(preview.beforeText, preview.afterText);
+            const planValidation = validatePatchPlan(parsedPlan, {
+                entries,
+                focusEntryId: validation.normalized.entryId,
+                allowRelatedEntries: validation.normalized.allowRelatedEntries,
+            });
+            if (!planValidation.ok) {
+                throw new Error(planValidation.errors.map(item => item.message).join('\n'));
+            }
+
+            const preview = buildPatchPlanPreview(entries, planValidation.normalized.operations);
+            const entryPreviews = preview.entryPreviews.map((item) => {
+                const lineDiff = buildLineDiff(item.beforeText, item.afterText);
+                return {
+                    ...item,
+                    lineDiff,
+                    diffSummary: summarizeLineDiff(lineDiff),
+                };
+            });
 
             patchPreview.value = {
-                entryId: String(targetEntry.id),
-                entryIndex: targetIndex,
-                entryTitle: targetEntry.name || targetEntry.comment || `条目 ${targetIndex + 1}`,
-                patch: mergedPatch,
-                beforeText: preview.beforeText,
-                afterText: preview.afterText,
-                lineDiff,
-                diffSummary: summarizeLineDiff(lineDiff),
-                changed: preview.changed,
+                summary: planValidation.normalized.summary,
+                selectedEntryIds: planValidation.normalized.selectedEntryIds,
+                operationCount: preview.operationCount,
+                affectedEntryIds: preview.affectedEntryIds,
+                affectedEntryCount: preview.affectedEntryCount,
+                entryPreviews,
+                plan: planValidation.normalized,
+                changed: entryPreviews.some(item => item.changed),
             };
 
-            if (!preview.changed) {
+            if (!patchPreview.value.changed) {
                 showOperationNotice?.({
                     type: 'warning',
                     title: '改写预览生成成功（但内容未变化）',
@@ -164,7 +308,7 @@ export function useWorldBookAIPatch({ apiSettings, openErrorModal, showOperation
                 showOperationNotice?.({
                     type: 'success',
                     title: '改写预览已生成',
-                    message: `目标条目：${patchPreview.value.entryTitle}`,
+                    message: `涉及 ${patchPreview.value.affectedEntryCount} 个条目，${patchPreview.value.operationCount} 个 patch 操作。`,
                     duration: 3500,
                 });
             }
@@ -184,40 +328,48 @@ export function useWorldBookAIPatch({ apiSettings, openErrorModal, showOperation
     };
 
     const applyPatchPreviewToEditableData = (editableData, preview) => {
-        if (!preview) {
+        if (!preview?.entryPreviews?.length) {
             throw new Error('没有可应用的改写预览。');
         }
 
         const entries = Array.isArray(editableData?.book_entries) ? editableData.book_entries : [];
-        const expectedId = String(preview.entryId || '');
-        const targetIndex = findWorldBookEntryIndex(entries, expectedId);
-        if (targetIndex < 0) {
-            throw new Error('改写目标条目不存在或已变更，请重新生成预览。');
-        }
+        const appliedEntries = [];
+        let changedCount = 0;
 
-        const current = entries[targetIndex];
-        const currentTargetText = getPatchTargetText(current, preview.patch);
-        if (currentTargetText !== preview.beforeText) {
-            throw new Error('目标内容在预览后发生变化，请重新生成改写预览后再应用。');
-        }
+        preview.entryPreviews.forEach((entryPreview) => {
+            const targetIndex = findWorldBookEntryIndex(entries, entryPreview.entryId);
+            if (targetIndex < 0) {
+                throw new Error(`改写目标条目不存在或已变更（id=${entryPreview.entryId}），请重新生成预览。`);
+            }
 
-        const refreshedPreview = buildPatchPreview(current, preview.patch);
-        const nextEntry = { ...refreshedPreview.nextEntry };
+            const current = entries[targetIndex];
+            const currentFieldText = getEntryFieldText(current, entryPreview.field);
+            if (currentFieldText !== entryPreview.beforeText) {
+                throw new Error(`条目「${entryPreview.entryTitle}」的 ${entryPreview.field} 在预览后发生变化，请重新生成改写预览。`);
+            }
 
-        if (preview.patch?.field === 'keysText') {
-            const keys = normalizeKeywords(nextEntry.keysText);
-            nextEntry.keys = keys;
-            nextEntry.keysText = keys.join(', ');
-        }
+            const nextEntry = applyPatchOperationsToEntry(current, entryPreview.operations);
+            if (entryPreview.field === 'keysText') {
+                const keys = normalizeKeywords(nextEntry.keysText);
+                nextEntry.keys = keys;
+                nextEntry.keysText = keys.join(', ');
+            }
 
-        editableData.book_entries.splice(targetIndex, 1, nextEntry);
+            entries.splice(targetIndex, 1, nextEntry);
+            appliedEntries.push({
+                entryId: String(nextEntry.id),
+                entryTitle: nextEntry.name || nextEntry.comment || `条目 ${targetIndex + 1}`,
+                field: entryPreview.field,
+                changed: entryPreview.changed,
+            });
+            if (entryPreview.changed) changedCount += 1;
+        });
 
         return {
-            entryIndex: targetIndex,
-            entryId: String(nextEntry.id),
-            entryTitle: nextEntry.name || nextEntry.comment || `条目 ${targetIndex + 1}`,
-            field: preview.patch?.field || 'content',
-            changed: refreshedPreview.changed,
+            changedCount,
+            affectedEntryCount: appliedEntries.length,
+            operationCount: preview.operationCount || 0,
+            entries: appliedEntries,
         };
     };
 

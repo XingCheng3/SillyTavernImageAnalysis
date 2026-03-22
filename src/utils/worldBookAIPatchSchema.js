@@ -1,3 +1,12 @@
+import {
+    TEXT_PATCH_ACTION,
+    applyTextPatchOperation,
+    applyTextPatchOperations,
+    buildTextPatchPreview,
+    createTextPatchOperation,
+    validateTextPatchOperation,
+} from './structuredTextPatch.js';
+
 export const WORLD_BOOK_PATCH_SCOPE = Object.freeze({
     ENTRY: 'entry',
     PARAGRAPH: 'paragraph',
@@ -11,8 +20,22 @@ export const WORLD_BOOK_PATCH_MODE = Object.freeze({
     PREPEND: 'prepend',
 });
 
+export const WORLD_BOOK_PATCH_ACTION = Object.freeze({
+    REPLACE_TEXT: TEXT_PATCH_ACTION.REPLACE_TEXT,
+    APPEND_AFTER_TEXT: TEXT_PATCH_ACTION.APPEND_AFTER_TEXT,
+    PREPEND_BEFORE_TEXT: TEXT_PATCH_ACTION.PREPEND_BEFORE_TEXT,
+    REPLACE_PARAGRAPH: TEXT_PATCH_ACTION.REPLACE_PARAGRAPH,
+    REPLACE_WHOLE: TEXT_PATCH_ACTION.REPLACE_WHOLE,
+});
+
+export const WORLD_BOOK_PATCH_ALLOWED_FIELDS = ['content', 'comment', 'name', 'keysText'];
+
 function normalizeString(value) {
-    return String(value ?? '').trim();
+    return String(value ?? '').replace(/\r\n/g, '\n').trim();
+}
+
+function normalizeMultilineText(value) {
+    return String(value ?? '').replace(/\r\n/g, '\n');
 }
 
 function splitParagraphs(content = '') {
@@ -20,6 +43,10 @@ function splitParagraphs(content = '') {
         .split(/\n{2,}/)
         .map(v => v.trim())
         .filter(Boolean);
+}
+
+function makeEntryTitle(entry = {}, index = 0) {
+    return entry.name || entry.comment || `条目 ${index + 1}`;
 }
 
 export function getEntryParagraphs(entry = {}) {
@@ -44,8 +71,9 @@ export function createPatchInstruction(raw = {}) {
         field: normalizeString(raw.field || 'content'),
         paragraphIndex: Number.isFinite(raw.paragraphIndex) ? Math.max(0, Math.trunc(raw.paragraphIndex)) : null,
         instruction: normalizeString(raw.instruction),
-        replacement: normalizeString(raw.replacement),
+        replacement: normalizeMultilineText(raw.replacement),
         keepStyle: raw.keepStyle !== false,
+        allowRelatedEntries: raw.allowRelatedEntries === true,
     };
 }
 
@@ -93,6 +121,14 @@ export function validatePatchInstruction(raw = {}) {
         });
     }
 
+    if (instruction.scope === WORLD_BOOK_PATCH_SCOPE.FIELD && !WORLD_BOOK_PATCH_ALLOWED_FIELDS.includes(instruction.field)) {
+        errors.push({
+            code: 'INVALID_FIELD',
+            message: `field 仅支持 ${WORLD_BOOK_PATCH_ALLOWED_FIELDS.join(' / ')}。`,
+            path: 'field',
+        });
+    }
+
     return {
         ok: errors.length === 0,
         errors,
@@ -100,14 +136,207 @@ export function validatePatchInstruction(raw = {}) {
     };
 }
 
+export function getEntryFieldText(entry = {}, field = 'content') {
+    if (field === 'keysText') {
+        if (normalizeString(entry.keysText)) {
+            return normalizeMultilineText(entry.keysText);
+        }
+        if (Array.isArray(entry.keys) && entry.keys.length > 0) {
+            return entry.keys.map(item => String(item ?? '').trim()).filter(Boolean).join(', ');
+        }
+        return '';
+    }
+
+    return normalizeMultilineText(entry?.[field] ?? '');
+}
+
+function setEntryFieldText(entry = {}, field = 'content', value = '') {
+    const next = { ...entry };
+    next[field] = normalizeMultilineText(value);
+    if (field === 'keysText') {
+        next.keysText = normalizeMultilineText(value);
+    }
+    return next;
+}
+
+export function createPatchOperation(raw = {}) {
+    const textOperation = createTextPatchOperation(raw);
+
+    return {
+        ...textOperation,
+        entryId: normalizeString(raw.entryId),
+        field: normalizeString(raw.field || 'content'),
+    };
+}
+
+export function validatePatchOperation(raw = {}, options = {}) {
+    const operation = createPatchOperation(raw);
+    const errors = [];
+
+    if (!operation.entryId) {
+        errors.push({
+            code: 'PATCH_OPERATION_ENTRY_ID_REQUIRED',
+            message: 'patch operation 必须指定 entryId。',
+            path: 'entryId',
+        });
+    }
+
+    if (!WORLD_BOOK_PATCH_ALLOWED_FIELDS.includes(operation.field)) {
+        errors.push({
+            code: 'PATCH_OPERATION_INVALID_FIELD',
+            message: `patch operation field 仅支持 ${WORLD_BOOK_PATCH_ALLOWED_FIELDS.join(' / ')}。`,
+            path: 'field',
+        });
+    }
+
+    const textValidation = validateTextPatchOperation(operation);
+    if (!textValidation.ok) {
+        errors.push(...textValidation.errors);
+    }
+
+    if (options.focusEntryId && options.allowRelatedEntries !== true && operation.entryId && normalizeString(options.focusEntryId) !== operation.entryId) {
+        errors.push({
+            code: 'PATCH_OPERATION_RELATED_ENTRY_NOT_ALLOWED',
+            message: '当前请求未开启关联条目修改，不允许修改其它 entryId。',
+            path: 'entryId',
+        });
+    }
+
+    if (Array.isArray(options.entries) && operation.entryId) {
+        const targetIndex = findWorldBookEntryIndex(options.entries, operation.entryId);
+        if (targetIndex < 0) {
+            errors.push({
+                code: 'PATCH_OPERATION_ENTRY_NOT_FOUND',
+                message: `未找到条目 id=${operation.entryId}`,
+                path: 'entryId',
+            });
+        }
+    }
+
+    return {
+        ok: errors.length === 0,
+        errors,
+        normalized: operation,
+    };
+}
+
+function groupPatchOperationsByEntryField(operations = []) {
+    const map = new Map();
+
+    (operations || []).forEach((rawOperation) => {
+        const operation = createPatchOperation(rawOperation);
+        const key = `${operation.entryId}::${operation.field}`;
+        if (!map.has(key)) {
+            map.set(key, []);
+        }
+        map.get(key).push(operation);
+    });
+
+    return Array.from(map.entries()).map(([key, ops]) => ({
+        key,
+        entryId: ops[0]?.entryId || '',
+        field: ops[0]?.field || 'content',
+        operations: ops,
+    }));
+}
+
+export function validatePatchPlan(raw = {}, options = {}) {
+    const plan = raw && typeof raw === 'object' && !Array.isArray(raw)
+        ? raw
+        : { operations: Array.isArray(raw) ? raw : [] };
+
+    const operations = Array.isArray(plan.operations) ? plan.operations : [];
+    const errors = [];
+    const normalizedOperations = [];
+
+    if (!operations.length) {
+        errors.push({
+            code: 'PATCH_PLAN_EMPTY',
+            message: 'AI 未返回任何 patch operations。',
+            path: 'operations',
+        });
+    }
+
+    operations.forEach((operation, index) => {
+        const validation = validatePatchOperation(operation, options);
+        if (!validation.ok) {
+            validation.errors.forEach((error) => {
+                errors.push({ ...error, path: `operations[${index}]${error.path ? `.${error.path}` : ''}` });
+            });
+            return;
+        }
+        normalizedOperations.push(validation.normalized);
+    });
+
+    return {
+        ok: errors.length === 0,
+        errors,
+        normalized: {
+            summary: normalizeString(plan.summary),
+            selectedEntryIds: Array.isArray(plan.selectedEntryIds)
+                ? plan.selectedEntryIds.map(item => normalizeString(item)).filter(Boolean)
+                : [],
+            operations: normalizedOperations,
+        },
+    };
+}
+
+export function applyPatchOperationToEntry(entry = {}, rawOperation = {}) {
+    const operation = createPatchOperation(rawOperation);
+    const beforeText = getEntryFieldText(entry, operation.field);
+    const afterText = applyTextPatchOperation(beforeText, operation);
+    return setEntryFieldText(entry, operation.field, afterText);
+}
+
+export function applyPatchOperationsToEntry(entry = {}, operations = []) {
+    return (operations || []).reduce((current, operation) => applyPatchOperationToEntry(current, operation), { ...entry });
+}
+
+export function buildPatchPlanPreview(entries = [], operations = []) {
+    const groups = groupPatchOperationsByEntryField(operations);
+    const entryPreviews = groups.map((group) => {
+        const entryIndex = findWorldBookEntryIndex(entries, group.entryId);
+        if (entryIndex < 0) {
+            throw new Error(`未找到条目 id=${group.entryId}`);
+        }
+
+        const entry = entries[entryIndex];
+        const beforeText = getEntryFieldText(entry, group.field);
+        const afterText = applyTextPatchOperations(beforeText, group.operations);
+
+        return {
+            entryId: String(entry.id),
+            entryIndex,
+            entryTitle: makeEntryTitle(entry, entryIndex),
+            field: group.field,
+            beforeText,
+            afterText,
+            changed: beforeText !== afterText,
+            operations: group.operations,
+        };
+    }).sort((a, b) => a.entryIndex - b.entryIndex);
+
+    const affectedEntryIds = Array.from(new Set(entryPreviews.map(item => item.entryId)));
+
+    return {
+        operationCount: operations.length,
+        affectedEntryIds,
+        affectedEntryCount: affectedEntryIds.length,
+        entryPreviews,
+    };
+}
+
+// -----------------------
+// Legacy single-target helpers
+// -----------------------
 export function getPatchTargetText(entry = {}, patch = {}) {
     const normalizedPatch = createPatchInstruction(patch);
 
     if (normalizedPatch.field !== 'content') {
-        return normalizeString(entry[normalizedPatch.field]);
+        return getEntryFieldText(entry, normalizedPatch.field);
     }
 
-    const content = normalizeString(entry.content);
+    const content = getEntryFieldText(entry, 'content');
 
     if (normalizedPatch.scope === WORLD_BOOK_PATCH_SCOPE.PARAGRAPH) {
         const paragraphs = splitParagraphs(content);
@@ -118,23 +347,31 @@ export function getPatchTargetText(entry = {}, patch = {}) {
     return content;
 }
 
+function applyLegacyPatchToField(fieldText = '', patch = {}) {
+    const source = normalizeMultilineText(fieldText);
+    const replacement = normalizeMultilineText(patch.replacement);
+
+    if (patch.mode === WORLD_BOOK_PATCH_MODE.APPEND) {
+        return [source, replacement].filter(Boolean).join(source ? '\n' : '');
+    }
+
+    if (patch.mode === WORLD_BOOK_PATCH_MODE.PREPEND) {
+        return [replacement, source].filter(Boolean).join(source ? '\n' : '');
+    }
+
+    return replacement || source;
+}
+
 export function applyLocalPatchToEntry(entry = {}, patch = {}) {
     const normalizedPatch = createPatchInstruction(patch);
     const next = { ...entry };
 
     if (normalizedPatch.field !== 'content') {
-        const prevValue = normalizeString(next[normalizedPatch.field]);
-        if (normalizedPatch.mode === WORLD_BOOK_PATCH_MODE.APPEND) {
-            next[normalizedPatch.field] = [prevValue, normalizedPatch.replacement].filter(Boolean).join('\n');
-        } else if (normalizedPatch.mode === WORLD_BOOK_PATCH_MODE.PREPEND) {
-            next[normalizedPatch.field] = [normalizedPatch.replacement, prevValue].filter(Boolean).join('\n');
-        } else {
-            next[normalizedPatch.field] = normalizedPatch.replacement || prevValue;
-        }
-        return next;
+        const prevValue = getEntryFieldText(next, normalizedPatch.field);
+        return setEntryFieldText(next, normalizedPatch.field, applyLegacyPatchToField(prevValue, normalizedPatch));
     }
 
-    const content = normalizeString(next.content);
+    const content = getEntryFieldText(next, 'content');
 
     if (normalizedPatch.scope === WORLD_BOOK_PATCH_SCOPE.PARAGRAPH) {
         const paragraphs = splitParagraphs(content);
@@ -144,24 +381,20 @@ export function applyLocalPatchToEntry(entry = {}, patch = {}) {
             return next;
         }
 
-        if (normalizedPatch.mode === WORLD_BOOK_PATCH_MODE.APPEND) {
-            paragraphs[idx] = [paragraphs[idx], normalizedPatch.replacement].filter(Boolean).join('\n');
-        } else if (normalizedPatch.mode === WORLD_BOOK_PATCH_MODE.PREPEND) {
-            paragraphs[idx] = [normalizedPatch.replacement, paragraphs[idx]].filter(Boolean).join('\n');
-        } else {
-            paragraphs[idx] = normalizedPatch.replacement || paragraphs[idx];
-        }
-
+        paragraphs[idx] = applyLegacyPatchToField(paragraphs[idx], normalizedPatch);
         next.content = paragraphs.join('\n\n');
         return next;
     }
 
+    next.content = applyLegacyPatchToField(content, normalizedPatch.mode === WORLD_BOOK_PATCH_MODE.APPEND || normalizedPatch.mode === WORLD_BOOK_PATCH_MODE.PREPEND
+        ? { ...normalizedPatch, replacement: normalizedPatch.replacement }
+        : normalizedPatch,
+    );
+
     if (normalizedPatch.mode === WORLD_BOOK_PATCH_MODE.APPEND) {
-        next.content = [content, normalizedPatch.replacement].filter(Boolean).join('\n\n');
+        next.content = [content, normalizedPatch.replacement].filter(Boolean).join(content ? '\n\n' : '');
     } else if (normalizedPatch.mode === WORLD_BOOK_PATCH_MODE.PREPEND) {
-        next.content = [normalizedPatch.replacement, content].filter(Boolean).join('\n\n');
-    } else {
-        next.content = normalizedPatch.replacement || content;
+        next.content = [normalizedPatch.replacement, content].filter(Boolean).join(content ? '\n\n' : '');
     }
 
     return next;
@@ -179,5 +412,17 @@ export function buildPatchPreview(entry = {}, patch = {}) {
         afterText,
         changed: beforeText !== afterText,
         nextEntry,
+    };
+}
+
+export function buildTextFieldPatchPreview(entry = {}, field = 'content', operations = []) {
+    const beforeText = getEntryFieldText(entry, field);
+    const { afterText, changed } = buildTextPatchPreview(beforeText, operations);
+
+    return {
+        field,
+        beforeText,
+        afterText,
+        changed,
     };
 }
