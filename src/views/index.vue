@@ -258,9 +258,11 @@
             :show="showWorldBookAIPatchModal"
             :isGenerating="isWorldBookAIPatching"
             :form="worldBookAIPatchForm"
+            :plannerPreview="worldBookAIPatchPlannerPreview"
             :preview="worldBookAIPatchPreview"
             :entries="editableData?.book_entries || []"
             @close="closeWorldBookAIPatchModal"
+            @generate-planner="handleGenerateWorldBookAIPatchPlannerPreview"
             @generate="handleGenerateWorldBookAIPatchPreview"
             @apply="handleApplyWorldBookAIPatch"
         />
@@ -539,8 +541,9 @@ watch(
         worldBookAIPatchForm.allowRelatedEntries,
     ],
     () => {
-        if (worldBookAIPatchPreview.value) {
+        if (worldBookAIPatchPlannerPreview.value || worldBookAIPatchPreview.value) {
             worldBookAIPatchForm.confirmReviewedDiff = false;
+            clearWorldBookAIPatchPlannerPreview();
             clearWorldBookAIPatchPreview();
         }
     },
@@ -647,10 +650,14 @@ const {
 
 const {
     isPatching: isWorldBookAIPatching,
+    plannerPreview: worldBookAIPatchPlannerPreview,
     patchPreview: worldBookAIPatchPreview,
+    clearPlannerPreview: clearWorldBookAIPatchPlannerPreview,
     clearPatchPreview: clearWorldBookAIPatchPreview,
+    generatePlannerPreview: generateWorldBookAIPatchPlannerPreview,
     generatePatchPreview: generateWorldBookAIPatchPreview,
     applyPatchPreviewToEditableData,
+    getConfirmedPlanner: getConfirmedWorldBookAIPatchPlanner,
 } = useWorldBookAIPatch({
     apiSettings,
     openErrorModal,
@@ -1249,6 +1256,7 @@ const openWorldBookAIPatchModal = () => {
     }
 
     worldBookAIPatchForm.confirmReviewedDiff = false;
+    clearWorldBookAIPatchPlannerPreview();
     clearWorldBookAIPatchPreview();
     showWorldBookAIPatchModal.value = true;
 };
@@ -1256,7 +1264,24 @@ const openWorldBookAIPatchModal = () => {
 const closeWorldBookAIPatchModal = () => {
     showWorldBookAIPatchModal.value = false;
     worldBookAIPatchForm.confirmReviewedDiff = false;
+    clearWorldBookAIPatchPlannerPreview();
     clearWorldBookAIPatchPreview();
+};
+
+const handleGenerateWorldBookAIPatchPlannerPreview = async () => {
+    if (!checkAndPromptApiConfig()) {
+        return;
+    }
+
+    try {
+        worldBookAIPatchForm.confirmReviewedDiff = false;
+        await generateWorldBookAIPatchPlannerPreview({
+            editableData: editableData.value,
+            patchForm: worldBookAIPatchForm,
+        });
+    } catch {
+        // 错误已经在 composable 内统一提示
+    }
 };
 
 const handleGenerateWorldBookAIPatchPreview = async () => {
@@ -1266,9 +1291,14 @@ const handleGenerateWorldBookAIPatchPreview = async () => {
 
     try {
         worldBookAIPatchForm.confirmReviewedDiff = false;
+        const confirmedPlanner = getConfirmedWorldBookAIPatchPlanner(
+            worldBookAIPatchPlannerPreview.value,
+            worldBookAIPatchForm.entryId,
+        );
         await generateWorldBookAIPatchPreview({
             editableData: editableData.value,
             patchForm: worldBookAIPatchForm,
+            confirmedPlanner,
         });
     } catch {
         // 错误已经在 composable 内统一提示

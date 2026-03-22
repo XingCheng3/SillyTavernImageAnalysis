@@ -102,6 +102,33 @@
                     </div>
                 </div>
 
+                <div v-if="plannerPreview" class="section-card preview-card">
+                    <div class="preview-head">
+                        <h3>联动规划确认</h3>
+                        <span class="count-chip">{{ selectedPlannerCount }} / {{ plannerPreview.targets?.length || 0 }} 已选</span>
+                    </div>
+                    <p class="book-meta">请先确认真正需要联动修改的条目，再生成改写预览。</p>
+                    <p v-if="plannerPreview.summary" class="preview-summary">{{ plannerPreview.summary }}</p>
+
+                    <div class="planner-actions" v-if="plannerPreview.targets?.length > 1">
+                        <button type="button" class="small-button" @click="selectAllPlannerTargets">全选</button>
+                        <button type="button" class="small-button" @click="selectOnlyFocusPlannerTarget">仅保留目标条目</button>
+                    </div>
+
+                    <div class="planner-card">
+                        <h4>条目列表</h4>
+                        <div class="planner-target-list">
+                            <label v-for="target in plannerPreview.targets" :key="target.entryId" class="planner-target-item">
+                                <input type="checkbox" v-model="target.selected" :disabled="String(target.entryId) === String(form.entryId)" />
+                                <div>
+                                    <strong>{{ target.title }}</strong>
+                                    <p>ID: {{ target.entryId }}<span v-if="target.reason"> ｜ {{ target.reason }}</span></p>
+                                </div>
+                            </label>
+                        </div>
+                    </div>
+                </div>
+
                 <div v-if="preview" class="section-card preview-card">
                     <div class="preview-head">
                         <h3>改写预览</h3>
@@ -114,7 +141,7 @@
                     <p v-if="preview.summary" class="preview-summary">{{ preview.summary }}</p>
 
                     <div v-if="preview.planner?.targets?.length" class="planner-card">
-                        <h4>联动条目规划</h4>
+                        <h4>本次采纳的联动规划</h4>
                         <ul>
                             <li v-for="target in preview.planner.targets" :key="target.entryId">
                                 <strong>{{ target.entryId }}</strong>
@@ -125,10 +152,13 @@
 
                     <div v-for="item in preview.entryPreviews" :key="`${item.entryId}-${item.field}`" class="entry-preview-card">
                         <div class="entry-preview-head">
-                            <div>
-                                <strong>{{ item.entryTitle }}</strong>
-                                <p>字段：{{ item.field }} ｜ 操作数：{{ item.operations?.length || 0 }}</p>
-                            </div>
+                            <label class="entry-preview-toggle">
+                                <input type="checkbox" v-model="item.selected" />
+                                <div>
+                                    <strong>{{ item.entryTitle }}</strong>
+                                    <p>字段：{{ item.field }} ｜ 操作数：{{ item.operations?.length || 0 }}</p>
+                                </div>
+                            </label>
                             <span class="count-chip small">{{ item.changed ? '已变更' : '无变化' }}</span>
                         </div>
 
@@ -173,10 +203,31 @@
                     <span>我已核对差异并确认应用改写结果</span>
                 </label>
                 <button class="action-button secondary" @click="$emit('close')">取消</button>
-                <button class="action-button" @click="$emit('generate')" :disabled="isGenerating || !form.instruction?.trim() || !form.entryId">
+                <button
+                    v-if="form.allowRelatedEntries && !plannerPreview"
+                    class="action-button"
+                    @click="$emit('generate-planner')"
+                    :disabled="isGenerating || !form.instruction?.trim() || !form.entryId"
+                >
+                    {{ isGenerating ? '规划中...' : '生成联动规划' }}
+                </button>
+                <button
+                    v-else-if="form.allowRelatedEntries"
+                    class="action-button"
+                    @click="$emit('generate')"
+                    :disabled="isGenerating || !form.instruction?.trim() || !form.entryId || selectedPlannerCount === 0"
+                >
+                    {{ isGenerating ? '生成中...' : (preview ? '重新生成改写预览' : '基于规划生成改写预览') }}
+                </button>
+                <button
+                    v-else
+                    class="action-button"
+                    @click="$emit('generate')"
+                    :disabled="isGenerating || !form.instruction?.trim() || !form.entryId"
+                >
                     {{ isGenerating ? '生成中...' : '生成改写预览' }}
                 </button>
-                <button class="action-button" @click="$emit('apply')" :disabled="!preview || isGenerating || !form.confirmReviewedDiff">应用改写</button>
+                <button class="action-button" @click="$emit('apply')" :disabled="!preview || isGenerating || !form.confirmReviewedDiff || selectedPreviewCount === 0">应用改写</button>
             </div>
         </div>
     </div>
@@ -189,11 +240,12 @@ const props = defineProps({
     show: { type: Boolean, required: true },
     isGenerating: { type: Boolean, default: false },
     form: { type: Object, required: true },
+    plannerPreview: { type: Object, default: null },
     preview: { type: Object, default: null },
     entries: { type: Array, default: () => [] },
 });
 
-defineEmits(['close', 'generate', 'apply']);
+defineEmits(['close', 'generate-planner', 'generate', 'apply']);
 
 const selectedEntryParagraphs = computed(() => {
     const target = String(props.form?.entryId || '');
@@ -207,6 +259,27 @@ const selectedEntryParagraphs = computed(() => {
         .map(v => v.trim())
         .filter(Boolean);
 });
+
+const selectedPlannerCount = computed(() => {
+    return (props.plannerPreview?.targets || []).filter(item => item.selected).length;
+});
+
+const selectedPreviewCount = computed(() => {
+    return (props.preview?.entryPreviews || []).filter(item => item.selected !== false).length;
+});
+
+const selectAllPlannerTargets = () => {
+    (props.plannerPreview?.targets || []).forEach((item) => {
+        item.selected = true;
+    });
+};
+
+const selectOnlyFocusPlannerTarget = () => {
+    const focusId = String(props.form?.entryId || '');
+    (props.plannerPreview?.targets || []).forEach((item) => {
+        item.selected = String(item.entryId) === focusId;
+    });
+};
 </script>
 
 <style scoped>
@@ -363,6 +436,37 @@ const selectedEntryParagraphs = computed(() => {
     padding-left: 18px;
     color: #57534e;
     line-height: 1.7;
+}
+
+.planner-actions {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-bottom: 10px;
+}
+
+.planner-target-list {
+    display: grid;
+    gap: 10px;
+}
+
+.planner-target-item,
+.entry-preview-toggle {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+}
+
+.planner-target-item input,
+.entry-preview-toggle input {
+    margin-top: 3px;
+}
+
+.planner-target-item p,
+.entry-preview-toggle p {
+    margin: 4px 0 0;
+    color: #78716c;
+    font-size: 12px;
 }
 
 .entry-preview-head {

@@ -4,6 +4,7 @@ import {
     createWorldBookPatchPlannerResult,
     validateWorldBookPatchPlannerResult,
 } from '../src/utils/worldBookAIPatchPlanner.js';
+import { validatePatchPlan } from '../src/utils/worldBookAIPatchSchema.js';
 import { extractJsonText, parseJsonObjectResponse } from '../src/utils/worldBookAIPatchResponse.js';
 
 function testPlannerResultNormalization() {
@@ -94,6 +95,32 @@ function testJsonExtractionParsesFencedResponse() {
     assert.equal(parsed.summary, 'ok');
 }
 
+function testPatchPlanRespectsConfirmedPlannerSelection() {
+    const result = validatePatchPlan({
+        summary: '非法跨条目修改',
+        operations: [
+            {
+                opId: 'op_1',
+                entryId: '12',
+                field: 'content',
+                action: 'replace_whole',
+                replacement: '新的内容',
+            },
+        ],
+    }, {
+        entries: [
+            { id: 11, name: '帝国军纪' },
+            { id: 12, name: '贵族特权' },
+        ],
+        focusEntryId: '11',
+        allowRelatedEntries: true,
+        allowedEntryIds: ['11'],
+    });
+
+    assert.equal(result.ok, false);
+    assert.equal(result.errors.some(item => item.code === 'PATCH_OPERATION_ENTRY_NOT_SELECTED'), true);
+}
+
 function runAllTests() {
     console.log('🚀 开始运行世界书 AI patch planner 测试\n');
 
@@ -108,6 +135,9 @@ function runAllTests() {
 
     testJsonExtractionParsesFencedResponse();
     console.log('✓ patch 响应 JSON 提取正确');
+
+    testPatchPlanRespectsConfirmedPlannerSelection();
+    console.log('✓ patch plan 会遵守已确认的 planner 条目选择');
 
     console.log('\n✅ 世界书 AI patch planner 测试通过');
 }

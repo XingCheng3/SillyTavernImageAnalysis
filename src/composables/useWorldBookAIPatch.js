@@ -44,6 +44,7 @@ function createEntryPreviewWithDiff(item) {
         ...item,
         lineDiff,
         diffSummary: summarizeLineDiff(lineDiff),
+        selected: true,
     };
 }
 
@@ -70,7 +71,51 @@ async function requestChatCompletion(apiSettings, { messages, temperature = 0.4 
     return data?.choices?.[0]?.message?.content || '';
 }
 
-async function planRelatedEntries({ apiSettings, entries, targetEntry, patch }) {
+function buildPlannerPreviewPayload(entries = [], planner = { selectedEntryIds: [], targets: [] }) {
+    const entriesById = new Map((entries || []).map((entry, index) => [String(entry?.id ?? ''), {
+        entry,
+        index,
+        title: entry?.name || entry?.comment || `条目 ${index + 1}`,
+    }]));
+
+    const targets = (planner.targets || []).map((target) => {
+        const meta = entriesById.get(String(target.entryId)) || {};
+        return {
+            entryId: String(target.entryId),
+            title: meta.title || `条目 ${target.entryId}`,
+            reason: target.reason || '',
+            selected: (planner.selectedEntryIds || []).includes(String(target.entryId)),
+        };
+    });
+
+    return {
+        summary: planner.summary || '',
+        selectedEntryIds: (planner.selectedEntryIds || []).map(item => String(item)),
+        targets,
+    };
+}
+
+function getConfirmedPlanner(plannerPreview, focusEntryId = '') {
+    const selectedEntryIds = Array.from(new Set([
+        String(focusEntryId || '').trim(),
+        ...((plannerPreview?.targets || [])
+            .filter(item => item.selected)
+            .map(item => String(item.entryId || '').trim())),
+    ].filter(Boolean)));
+
+    return {
+        summary: plannerPreview?.summary || '',
+        selectedEntryIds,
+        targets: (plannerPreview?.targets || [])
+            .filter(item => selectedEntryIds.includes(String(item.entryId)))
+            .map(item => ({
+                entryId: String(item.entryId),
+                reason: item.reason || '',
+            })),
+    };
+}
+
+async function requestPlanner({ apiSettings, entries, targetEntry, patch }) {
     if (!patch.allowRelatedEntries) {
         return {
             summary: '仅修改当前聚焦条目',
@@ -134,13 +179,66 @@ function buildPatchPreviewPayload(entries, planValidation, planner) {
 
 export function useWorldBookAIPatch({ apiSettings, openErrorModal, showOperationNotice }) {
     const isPatching = ref(false);
+    const plannerPreview = ref(null);
     const patchPreview = ref(null);
+
+    const clearPlannerPreview = () => {
+        plannerPreview.value = null;
+    };
 
     const clearPatchPreview = () => {
         patchPreview.value = null;
     };
 
-    const generatePatchPreview = async ({ editableData, patchForm }) => {
+    const generatePlannerPreview = async ({ editableData, patchForm }) => {
+        const validation = validatePatchInstruction(patchForm || {});
+        if (!validation.ok) {
+            throw new Error(validation.errors.map(item => item.message).join('\n'));
+        }
+
+        const entries = Array.isArray(editableData?.book_entries) ? editableData.book_entries : [];
+        const targetIndex = findWorldBookEntryIndex(entries, validation.normalized.entryId);
+        if (targetIndex < 0) {
+            throw new Error(`未找到条目 id=${validation.normalized.entryId}`);
+        }
+
+        const targetEntry = entries[targetIndex];
+        ensureParagraphIndexInRange(targetEntry, validation.normalized);
+        isPatching.value = true;
+
+        try {
+            const planner = await requestPlanner({
+                apiSettings,
+                entries,
+                targetEntry,
+                patch: validation.normalized,
+            });
+
+            plannerPreview.value = buildPlannerPreviewPayload(entries, planner);
+            patchPreview.value = null;
+
+            showOperationNotice?.({
+                type: 'success',
+                title: validation.normalized.allowRelatedEntries ? '联动条目规划已生成' : '已锁定当前条目',
+                message: `当前规划包含 ${plannerPreview.value.selectedEntryIds.length} 个条目。`,
+                duration: 3500,
+            });
+
+            return plannerPreview.value;
+        } catch (error) {
+            openErrorModal?.({
+                title: '世界书联动规划失败',
+                code: 'AI_WORLD_BOOK_PATCH_PLANNER_FAILED',
+                message: error.message,
+                details: { message: error.message },
+            });
+            throw error;
+        } finally {
+            isPatching.value = false;
+        }
+    };
+
+    const generatePatchPreview = async ({ editableData, patchForm, confirmedPlanner = null }) => {
         const validation = validatePatchInstruction(patchForm || {});
         if (!validation.ok) {
             throw new Error(validation.errors.map(item => item.message).join('\n'));
@@ -161,14 +259,12 @@ export function useWorldBookAIPatch({ apiSettings, openErrorModal, showOperation
         isPatching.value = true;
 
         try {
-            const planner = await planRelatedEntries({
-                apiSettings,
-                entries,
-                targetEntry,
-                patch: validation.normalized,
-            });
-            const plannedEntries = getPlannedEntries(entries, planner);
+            const planner = confirmedPlanner || getConfirmedPlanner(plannerPreview.value, validation.normalized.entryId);
+            if (!planner.selectedEntryIds?.length) {
+                throw new Error('请先确认至少一个需要修改的条目。');
+            }
 
+            const plannedEntries = getPlannedEntries(entries, planner);
             const patchContent = await requestChatCompletion(apiSettings, {
                 temperature: 0.4,
                 messages: [
@@ -212,7 +308,7 @@ export function useWorldBookAIPatch({ apiSettings, openErrorModal, showOperation
                 showOperationNotice?.({
                     type: 'success',
                     title: '改写预览已生成',
-                    message: `planner 选中 ${planner.selectedEntryIds.length} 个条目，生成 ${patchPreview.value.operationCount} 个 patch 操作。`,
+                    message: `基于 ${planner.selectedEntryIds.length} 个已确认条目，生成 ${patchPreview.value.operationCount} 个 patch 操作。`,
                     duration: 3800,
                 });
             }
@@ -236,11 +332,16 @@ export function useWorldBookAIPatch({ apiSettings, openErrorModal, showOperation
             throw new Error('没有可应用的改写预览。');
         }
 
+        const selectedPreviews = preview.entryPreviews.filter(item => item.selected !== false);
+        if (!selectedPreviews.length) {
+            throw new Error('请先至少勾选一个要应用的条目。');
+        }
+
         const entries = Array.isArray(editableData?.book_entries) ? editableData.book_entries : [];
         const appliedEntries = [];
         let changedCount = 0;
 
-        preview.entryPreviews.forEach((entryPreview) => {
+        selectedPreviews.forEach((entryPreview) => {
             const targetIndex = findWorldBookEntryIndex(entries, entryPreview.entryId);
             if (targetIndex < 0) {
                 throw new Error(`改写目标条目不存在或已变更（id=${entryPreview.entryId}），请重新生成预览。`);
@@ -272,16 +373,20 @@ export function useWorldBookAIPatch({ apiSettings, openErrorModal, showOperation
         return {
             changedCount,
             affectedEntryCount: appliedEntries.length,
-            operationCount: preview.operationCount || 0,
+            operationCount: selectedPreviews.reduce((sum, item) => sum + (item.operations?.length || 0), 0),
             entries: appliedEntries,
         };
     };
 
     return {
         isPatching,
+        plannerPreview,
         patchPreview,
+        clearPlannerPreview,
         clearPatchPreview,
+        generatePlannerPreview,
         generatePatchPreview,
         applyPatchPreviewToEditableData,
+        getConfirmedPlanner,
     };
 }
