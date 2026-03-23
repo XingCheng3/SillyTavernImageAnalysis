@@ -9,6 +9,9 @@ import {
     expandWorldBookGenerationDraft,
 } from '../src/utils/worldBookAIGenerationSchema.js';
 import {
+    buildWorldBookGeneratorUserPrompt,
+} from '../src/utils/worldBookAIGenerationPrompt.js';
+import {
     mapDraftEntriesToEditableEntries,
     validateGenerationInput,
     validateWorldBookGenerationDraft,
@@ -167,6 +170,32 @@ function testGenerationInputValidation() {
     assert.equal(valid.ok, true);
 }
 
+function testGenerationPromptIncludesExistingWorldBookContext() {
+    const prompt = buildWorldBookGeneratorUserPrompt({
+        premise: '裂界战争升级',
+        targetEntryCount: 4,
+        openingCount: 1,
+        replaceExisting: false,
+        existingBook: {
+            name: '已有世界书',
+            description: '旧描述',
+            entries: [
+                {
+                    id: 77,
+                    name: '旧势力',
+                    keys: ['旧势力'],
+                    content: '这是旧条目正文。',
+                },
+            ],
+        },
+    });
+
+    const parsed = JSON.parse(prompt);
+    assert.equal(parsed.applyMode, 'append_to_existing');
+    assert.equal(parsed.existingWorldBook.entryCount, 1);
+    assert.equal(parsed.existingWorldBook.entries[0].content, '这是旧条目正文。');
+}
+
 function testOpeningValidationRules() {
     const draft = {
         book: { name: '开场校验' },
@@ -224,6 +253,17 @@ function testPatchSchemaAndApply() {
 
     const patched = applyLocalPatchToEntry(entry, patchValidation.normalized);
     assert.equal(patched.content, '第一段。\n\n新的第二段内容。\n\n第三段。');
+}
+
+function testPatchInstructionSupportsMultiSelectEntries() {
+    const validation = validatePatchInstruction({
+        selectedEntryIds: ['E02', 'E03'],
+        instruction: '统一语气，更克制。',
+    });
+
+    assert.equal(validation.ok, true);
+    assert.equal(validation.normalized.entryId, 'E02');
+    assert.deepEqual(validation.normalized.selectedEntryIds, ['E02', 'E03']);
 }
 
 function testPatchHelpers() {
@@ -459,11 +499,17 @@ function runAllTests() {
     testGenerationInputValidation();
     console.log('✓ 生成输入校验正确');
 
+    testGenerationPromptIncludesExistingWorldBookContext();
+    console.log('✓ 代写提示词包含全量世界书上下文');
+
     testOpeningValidationRules();
     console.log('✓ 开场分支规则校验正确');
 
     testPatchSchemaAndApply();
     console.log('✓ 局部改写 patch 结构与本地应用正确');
+
+    testPatchInstructionSupportsMultiSelectEntries();
+    console.log('✓ 改写指令支持多条目勾选范围');
 
     testPatchHelpers();
     console.log('✓ 局部改写辅助能力正确');

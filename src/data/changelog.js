@@ -1,8 +1,9 @@
-export const CURRENT_VERSION = 'v1.09';
+export const CURRENT_VERSION = 'v1.10';
 
 // 约定：后续每次有用户可感知的功能 / 修复 / UI 变化时，提交前同步追加一条。
 // 保持倒序、简短、面向用户可理解。
 export const CHANGELOG_ENTRIES = Object.freeze([
+    { time: '2026-03-23 10:12', version: 'v1.10', summary: '世界书改写改为多条目勾选驱动，代写预览支持内容查看与按条目应用。' },
     { time: '2026-03-23 08:18', version: 'v1.09', summary: '世界书 patch 支持按 operation 勾选应用，并隔离失败操作。' },
     { time: '2026-03-23 01:43', version: 'v1.08', summary: '世界书微调支持先确认规划条目，再生成和应用 patch。' },
     { time: '2026-03-23 01:33', version: 'v1.07', summary: '世界书微调新增 planner 阶段与模块拆分。' },

@@ -32,7 +32,7 @@ const PATCH_SYSTEM_PROMPT = `你是“角色卡世界书精修编辑器”。
 5) searchText 必须是输入中真实存在的原文片段，不能编造。
 6) 若 searchText 在同一字段中可能重复，必须补充 occurrence，必要时再加 anchors。
 7) 对 title/name/comment/keysText 这类短字段，允许使用 replace_whole。
-8) 如果当前请求未开启关联条目修改，只能修改 focus entry。
+8) 只能修改 request.selectedEntryIds 范围内的条目；可按需要修改其中一部分，不必全改。
 9) 如果无法安全生成 patch operations，返回空 operations，并在 summary 中说明原因。`;
 
 export function buildWorldBookPatchSystemPrompt() {
@@ -58,45 +58,36 @@ function createEntryDigest(entry = {}, index = 0) {
 
 export function buildWorldBookPatchUserPrompt({
     entries = [],
-    focusEntry = null,
     patch,
-    planner = null,
+    selectedEntryIds = [],
 }) {
     const digests = (entries || []).map((entry, index) => createEntryDigest(entry, index));
-    const focusDigest = focusEntry
-        ? createEntryDigest(focusEntry, digests.findIndex(item => item.entryId === String(focusEntry?.id ?? '')))
-        : null;
-
-    const allowRelatedEntries = patch?.allowRelatedEntries === true;
+    const normalizedSelectedEntryIds = Array.from(new Set((selectedEntryIds || [])
+        .map(item => String(item ?? '').trim())
+        .filter(Boolean)));
+    const focusEntryId = String(patch?.entryId || normalizedSelectedEntryIds[0] || '');
 
     const payload = {
         task: '按指令生成世界书 patch operation 列表',
         request: {
-            focusEntryId: String(patch?.entryId ?? ''),
-            scope: patch?.scope,
-            mode: patch?.mode,
-            field: patch?.field,
-            paragraphIndex: patch?.paragraphIndex,
+            focusEntryId,
+            selectedEntryIds: normalizedSelectedEntryIds,
             instruction: patch?.instruction,
             keepStyle: patch?.keepStyle !== false,
-            allowRelatedEntries,
+            scopeHint: patch?.scope,
+            modeHint: patch?.mode,
+            fieldHint: patch?.field,
+            paragraphIndexHint: patch?.paragraphIndex,
         },
         constraints: {
-            maxAffectedEntries: allowRelatedEntries ? 6 : 1,
-            maxOperations: allowRelatedEntries ? 12 : 6,
+            maxAffectedEntries: Math.max(1, normalizedSelectedEntryIds.length || 1),
+            maxOperations: Math.max(6, Math.min(24, (normalizedSelectedEntryIds.length || 1) * 4)),
             allowedFields: WORLD_BOOK_PATCH_ALLOWED_FIELDS,
             allowedActions: Object.values(WORLD_BOOK_PATCH_ACTION),
             preferMinimalPatch: true,
             avoidWholeRewriteUnlessNecessary: true,
+            allowSubsetModification: true,
         },
-        focusEntry: focusDigest,
-        plannerResult: planner
-            ? {
-                summary: planner.summary || '',
-                selectedEntryIds: planner.selectedEntryIds || [],
-                targets: planner.targets || [],
-            }
-            : undefined,
         entryCatalog: digests.map(({ entryId, index, title, keysText, excerpt, paragraphCount }) => ({
             entryId,
             index,

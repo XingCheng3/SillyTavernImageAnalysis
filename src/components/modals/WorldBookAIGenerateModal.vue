@@ -85,6 +85,7 @@
                         <div class="preview-counts">
                             <span class="count-chip">{{ draft.entries.length }} 条条目</span>
                             <span class="count-chip" v-if="draft.openings?.length">{{ draft.openings.length }} 个开场分支</span>
+                            <span class="count-chip">已选 {{ selectedDraftEntryCount }} 条</span>
                         </div>
                     </div>
                     <p class="book-meta">
@@ -99,10 +100,22 @@
                         </ul>
                     </div>
 
+                    <div class="select-actions">
+                        <button type="button" class="small-button" @click="selectAllDraftEntries">全选条目</button>
+                        <button type="button" class="small-button" @click="clearDraftEntrySelection">清空条目</button>
+                    </div>
+
                     <div class="preview-list">
-                        <div v-for="(entry, idx) in draft.entries.slice(0, 12)" :key="entry.id" class="preview-item">
+                        <div v-for="(entry, idx) in draft.entries" :key="entry.id" class="preview-item">
                             <div class="row-top">
-                                <strong>{{ idx + 1 }}. {{ entry.title }}</strong>
+                                <label class="entry-toggle">
+                                    <input
+                                        type="checkbox"
+                                        v-model="selectedDraftEntryIds"
+                                        :value="String(entry.id)"
+                                    />
+                                    <strong>{{ idx + 1 }}. {{ entry.title }}</strong>
+                                </label>
                                 <span class="light-tag" :class="entry.light">{{ entry.light === 'green' ? '绿灯' : '蓝灯' }}</span>
                             </div>
                             <div class="row-sub">
@@ -110,9 +123,10 @@
                                 <span>顺序：{{ entry.insertionOrder }}</span>
                                 <span>深度：{{ entry.depth }}</span>
                             </div>
+                            <p class="entry-excerpt">{{ getEntryExcerpt(entry) }}</p>
+                            <button type="button" class="small-button ghost" @click="openEntryDetail(entry)">查看全文</button>
                         </div>
                     </div>
-                    <p v-if="draft.entries.length > 12" class="ellipsis-tip">仅预览前 12 条，应用后可在世界书页继续逐条微调。</p>
 
                     <div class="opening-preview" v-if="draft.openings?.length">
                         <h4>开场分支预览</h4>
@@ -138,14 +152,31 @@
                 <button class="action-button" @click="$emit('generate')" :disabled="isGenerating || !form.premise?.trim()">
                     {{ isGenerating ? '生成中...' : '生成草稿' }}
                 </button>
-                <button class="action-button" @click="$emit('apply')" :disabled="!draft || isGenerating">应用草稿</button>
+                <button class="action-button" @click="emitApply" :disabled="!draft || isGenerating || selectedDraftEntryCount === 0">应用草稿</button>
+            </div>
+        </div>
+
+        <div v-if="detailEntry" class="detail-backdrop" @click.self="closeEntryDetail">
+            <div class="detail-modal">
+                <div class="detail-header">
+                    <h3>{{ detailEntry.title || '条目详情' }}</h3>
+                    <button class="close-button" @click="closeEntryDetail">&times;</button>
+                </div>
+                <div class="detail-meta">
+                    <span>ID: {{ detailEntry.id }}</span>
+                    <span>灯：{{ detailEntry.light === 'green' ? '绿灯' : '蓝灯' }}</span>
+                    <span>关键词：{{ detailEntry.keywords?.join(', ') || '无' }}</span>
+                </div>
+                <textarea class="detail-content" readonly :value="detailEntry.content || ''"></textarea>
             </div>
         </div>
     </div>
 </template>
 
 <script setup>
-defineProps({
+import { computed, ref, watch } from 'vue';
+
+const props = defineProps({
     show: { type: Boolean, required: true },
     isGenerating: { type: Boolean, default: false },
     form: { type: Object, required: true },
@@ -153,12 +184,67 @@ defineProps({
     warnings: { type: Array, default: () => [] },
 });
 
-defineEmits(['close', 'generate', 'apply']);
+const emit = defineEmits(['close', 'generate', 'apply']);
+
+const selectedDraftEntryIds = ref([]);
+const detailEntry = ref(null);
+
+const selectedDraftEntryCount = computed(() => selectedDraftEntryIds.value.length);
+
+const resetDraftEntrySelection = (draft) => {
+    const entryIds = (draft?.entries || []).map(entry => String(entry.id)).filter(Boolean);
+    selectedDraftEntryIds.value = [...entryIds];
+};
+
+watch(() => props.draft, (next) => {
+    if (!next) {
+        selectedDraftEntryIds.value = [];
+        detailEntry.value = null;
+        return;
+    }
+
+    resetDraftEntrySelection(next);
+}, { immediate: true });
+
+watch(() => props.show, (visible) => {
+    if (!visible) {
+        detailEntry.value = null;
+    }
+});
+
+const selectAllDraftEntries = () => {
+    const entryIds = (props.draft?.entries || []).map(entry => String(entry.id)).filter(Boolean);
+    selectedDraftEntryIds.value = [...entryIds];
+};
+
+const clearDraftEntrySelection = () => {
+    selectedDraftEntryIds.value = [];
+};
+
+const getEntryExcerpt = (entry = {}) => {
+    const text = String(entry.content || '').replace(/\s+/g, ' ').trim();
+    if (!text) return '（条目内容为空）';
+    return `${text.slice(0, 120)}${text.length > 120 ? '…' : ''}`;
+};
+
+const openEntryDetail = (entry = {}) => {
+    detailEntry.value = entry;
+};
+
+const closeEntryDetail = () => {
+    detailEntry.value = null;
+};
+
+const emitApply = () => {
+    emit('apply', {
+        selectedEntryIds: [...selectedDraftEntryIds.value],
+    });
+};
 </script>
 
 <style scoped>
 .worldbook-ai-modal {
-    width: min(100%, 1120px);
+    width: min(100%, 1160px);
 }
 
 .section-card {
@@ -290,10 +376,19 @@ defineEmits(['close', 'generate', 'apply']);
     line-height: 1.6;
 }
 
+.select-actions {
+    display: inline-flex;
+    gap: 8px;
+    margin-bottom: 10px;
+}
+
 .preview-list {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 10px;
+    max-height: 420px;
+    overflow: auto;
+    padding-right: 4px;
 }
 
 .preview-item {
@@ -306,13 +401,24 @@ defineEmits(['close', 'generate', 'apply']);
 .row-top {
     display: flex;
     justify-content: space-between;
-    align-items: center;
+    align-items: flex-start;
     gap: 8px;
+}
+
+.entry-toggle {
+    display: inline-flex;
+    align-items: flex-start;
+    gap: 8px;
+}
+
+.entry-toggle input {
+    margin-top: 4px;
 }
 
 .row-top strong {
     font-size: 13px;
     color: #1c1917;
+    line-height: 1.5;
 }
 
 .light-tag {
@@ -344,10 +450,16 @@ defineEmits(['close', 'generate', 'apply']);
     color: #78716c;
 }
 
-.ellipsis-tip {
-    margin: 10px 0 0;
+.entry-excerpt {
+    margin: 8px 0;
     font-size: 12px;
-    color: #78716c;
+    color: #57534e;
+    line-height: 1.6;
+    min-height: 58px;
+}
+
+.small-button.ghost {
+    background: #fff;
 }
 
 .opening-preview {
@@ -405,12 +517,71 @@ defineEmits(['close', 'generate', 'apply']);
     color: #78716c;
 }
 
+.detail-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(20, 20, 20, 0.45);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1100;
+    padding: 24px;
+}
+
+.detail-modal {
+    width: min(100%, 900px);
+    background: #fff;
+    border-radius: 16px;
+    border: 1px solid #d6d3d1;
+    padding: 14px;
+}
+
+.detail-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 8px;
+}
+
+.detail-header h3 {
+    margin: 0;
+    color: #1c1917;
+}
+
+.detail-meta {
+    margin-top: 10px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    font-size: 12px;
+    color: #57534e;
+}
+
+.detail-content {
+    width: 100%;
+    margin-top: 10px;
+    min-height: 360px;
+    max-height: 62vh;
+    border: 1px solid #dfdbd3;
+    border-radius: 12px;
+    padding: 10px;
+    font-size: 13px;
+    line-height: 1.7;
+    color: #292524;
+    background: #fafaf9;
+    resize: vertical;
+}
+
 @media (max-width: 900px) {
     .form-grid,
     .light-grid,
     .preview-list,
     .opening-list {
         grid-template-columns: 1fr;
+    }
+
+    .detail-backdrop {
+        padding: 12px;
     }
 }
 </style>

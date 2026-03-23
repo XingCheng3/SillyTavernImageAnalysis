@@ -14,17 +14,9 @@ import {
     buildWorldBookPatchUserPrompt,
 } from '@/utils/worldBookAIPatchPrompt';
 import {
-    buildWorldBookPatchPlannerSystemPrompt,
-    buildWorldBookPatchPlannerUserPrompt,
-    validateWorldBookPatchPlannerResult,
-} from '@/utils/worldBookAIPatchPlanner';
-import {
     parseWorldBookPatchPlanResponse,
-    parseWorldBookPatchPlannerResponse,
 } from '@/utils/worldBookAIPatchResponse';
 import { buildLineDiff, summarizeLineDiff } from '@/utils/textDiffPreview';
-
-const PATCH_PLANNER_MAX_AFFECTED_ENTRIES = 6;
 
 function ensureParagraphIndexInRange(entry, patch) {
     if (patch.scope !== 'paragraph') return;
@@ -87,103 +79,13 @@ async function requestChatCompletion(apiSettings, { messages, temperature = 0.4 
     return data?.choices?.[0]?.message?.content || '';
 }
 
-function buildPlannerPreviewPayload(entries = [], planner = { selectedEntryIds: [], targets: [] }) {
-    const entriesById = new Map((entries || []).map((entry, index) => [String(entry?.id ?? ''), {
-        entry,
-        index,
-        title: entry?.name || entry?.comment || `条目 ${index + 1}`,
-    }]));
-
-    const targets = (planner.targets || []).map((target) => {
-        const meta = entriesById.get(String(target.entryId)) || {};
-        return {
-            entryId: String(target.entryId),
-            title: meta.title || `条目 ${target.entryId}`,
-            reason: target.reason || '',
-            selected: (planner.selectedEntryIds || []).includes(String(target.entryId)),
-        };
-    });
-
-    return {
-        summary: planner.summary || '',
-        selectedEntryIds: (planner.selectedEntryIds || []).map(item => String(item)),
-        targets,
-    };
-}
-
-function getConfirmedPlanner(plannerPreview, focusEntryId = '') {
-    const selectedEntryIds = Array.from(new Set([
-        String(focusEntryId || '').trim(),
-        ...((plannerPreview?.targets || [])
-            .filter(item => item.selected)
-            .map(item => String(item.entryId || '').trim())),
-    ].filter(Boolean)));
-
-    return {
-        summary: plannerPreview?.summary || '',
-        selectedEntryIds,
-        targets: (plannerPreview?.targets || [])
-            .filter(item => selectedEntryIds.includes(String(item.entryId)))
-            .map(item => ({
-                entryId: String(item.entryId),
-                reason: item.reason || '',
-            })),
-    };
-}
-
-async function requestPlanner({ apiSettings, entries, targetEntry, patch }) {
-    if (!patch.allowRelatedEntries) {
-        return {
-            summary: '仅修改当前聚焦条目',
-            selectedEntryIds: [String(targetEntry.id)],
-            targets: [{ entryId: String(targetEntry.id), reason: 'focus entry' }],
-        };
-    }
-
-    const plannerContent = await requestChatCompletion(apiSettings, {
-        temperature: 0.2,
-        messages: [
-            { role: 'system', content: buildWorldBookPatchPlannerSystemPrompt() },
-            {
-                role: 'user',
-                content: buildWorldBookPatchPlannerUserPrompt({
-                    entries,
-                    focusEntry: targetEntry,
-                    patch,
-                    maxAffectedEntries: PATCH_PLANNER_MAX_AFFECTED_ENTRIES,
-                }),
-            },
-        ],
-    });
-
-    const parsedPlanner = parseWorldBookPatchPlannerResponse(plannerContent);
-    const plannerValidation = validateWorldBookPatchPlannerResult(parsedPlanner, {
-        entries,
-        focusEntryId: patch.entryId,
-        allowRelatedEntries: patch.allowRelatedEntries,
-        maxAffectedEntries: PATCH_PLANNER_MAX_AFFECTED_ENTRIES,
-    });
-
-    if (!plannerValidation.ok) {
-        throw new Error(plannerValidation.errors.map(item => item.message).join('\n'));
-    }
-
-    return plannerValidation.normalized;
-}
-
-function getPlannedEntries(entries = [], planner = { selectedEntryIds: [] }) {
-    const selectedIds = new Set((planner.selectedEntryIds || []).map(item => String(item)));
-    return (entries || []).filter(entry => selectedIds.has(String(entry?.id ?? '')));
-}
-
-function buildPatchPreviewPayload(entries, planValidation, planner) {
+function buildPatchPreviewPayload(entries, planValidation, selectedEntryIds = []) {
     const preview = buildPatchPlanPreview(entries, planValidation.normalized.operations);
     const entryPreviews = preview.entryPreviews.map(createEntryPreviewWithDiff);
 
     return {
-        summary: planValidation.normalized.summary || planner?.summary || '',
-        selectedEntryIds: planner?.selectedEntryIds || planValidation.normalized.selectedEntryIds,
-        planner,
+        summary: planValidation.normalized.summary || '',
+        selectedEntryIds,
         operationCount: preview.operationCount,
         successOperationCount: preview.successOperationCount,
         failedOperationCount: preview.failedOperationCount,
@@ -195,68 +97,20 @@ function buildPatchPreviewPayload(entries, planValidation, planner) {
     };
 }
 
+function getSelectedEntries(entries = [], selectedEntryIds = []) {
+    const selected = new Set((selectedEntryIds || []).map(item => String(item)));
+    return (entries || []).filter(entry => selected.has(String(entry?.id ?? '')));
+}
+
 export function useWorldBookAIPatch({ apiSettings, openErrorModal, showOperationNotice }) {
     const isPatching = ref(false);
-    const plannerPreview = ref(null);
     const patchPreview = ref(null);
-
-    const clearPlannerPreview = () => {
-        plannerPreview.value = null;
-    };
 
     const clearPatchPreview = () => {
         patchPreview.value = null;
     };
 
-    const generatePlannerPreview = async ({ editableData, patchForm }) => {
-        const validation = validatePatchInstruction(patchForm || {});
-        if (!validation.ok) {
-            throw new Error(validation.errors.map(item => item.message).join('\n'));
-        }
-
-        const entries = Array.isArray(editableData?.book_entries) ? editableData.book_entries : [];
-        const targetIndex = findWorldBookEntryIndex(entries, validation.normalized.entryId);
-        if (targetIndex < 0) {
-            throw new Error(`未找到条目 id=${validation.normalized.entryId}`);
-        }
-
-        const targetEntry = entries[targetIndex];
-        ensureParagraphIndexInRange(targetEntry, validation.normalized);
-        isPatching.value = true;
-
-        try {
-            const planner = await requestPlanner({
-                apiSettings,
-                entries,
-                targetEntry,
-                patch: validation.normalized,
-            });
-
-            plannerPreview.value = buildPlannerPreviewPayload(entries, planner);
-            patchPreview.value = null;
-
-            showOperationNotice?.({
-                type: 'success',
-                title: validation.normalized.allowRelatedEntries ? '联动条目规划已生成' : '已锁定当前条目',
-                message: `当前规划包含 ${plannerPreview.value.selectedEntryIds.length} 个条目。`,
-                duration: 3500,
-            });
-
-            return plannerPreview.value;
-        } catch (error) {
-            openErrorModal?.({
-                title: '世界书联动规划失败',
-                code: 'AI_WORLD_BOOK_PATCH_PLANNER_FAILED',
-                message: error.message,
-                details: { message: error.message },
-            });
-            throw error;
-        } finally {
-            isPatching.value = false;
-        }
-    };
-
-    const generatePatchPreview = async ({ editableData, patchForm, confirmedPlanner = null }) => {
+    const generatePatchPreview = async ({ editableData, patchForm }) => {
         const validation = validatePatchInstruction(patchForm || {});
         if (!validation.ok) {
             throw new Error(validation.errors.map(item => item.message).join('\n'));
@@ -267,22 +121,31 @@ export function useWorldBookAIPatch({ apiSettings, openErrorModal, showOperation
         }
 
         const entries = Array.isArray(editableData?.book_entries) ? editableData.book_entries : [];
-        const targetIndex = findWorldBookEntryIndex(entries, validation.normalized.entryId);
-        if (targetIndex < 0) {
-            throw new Error(`未找到条目 id=${validation.normalized.entryId}`);
+        const selectedEntryIds = validation.normalized.selectedEntryIds || [];
+        const selectedEntries = getSelectedEntries(entries, selectedEntryIds);
+
+        if (!selectedEntries.length) {
+            throw new Error('请至少勾选一个有效条目后再改写。');
         }
 
-        const targetEntry = entries[targetIndex];
-        ensureParagraphIndexInRange(targetEntry, validation.normalized);
+        const missingEntryIds = selectedEntryIds.filter(entryId => findWorldBookEntryIndex(entries, entryId) < 0);
+        if (missingEntryIds.length) {
+            throw new Error(`以下条目不存在或已删除：${missingEntryIds.join(', ')}`);
+        }
+
+        const focusEntry = selectedEntries.find(item => String(item?.id ?? '') === validation.normalized.entryId)
+            || selectedEntries[0];
+        const patch = {
+            ...validation.normalized,
+            entryId: String(focusEntry?.id ?? ''),
+            selectedEntryIds,
+        };
+
+        selectedEntries.forEach((entry) => ensureParagraphIndexInRange(entry, patch));
+
         isPatching.value = true;
 
         try {
-            const planner = confirmedPlanner || getConfirmedPlanner(plannerPreview.value, validation.normalized.entryId);
-            if (!planner.selectedEntryIds?.length) {
-                throw new Error('请先确认至少一个需要修改的条目。');
-            }
-
-            const plannedEntries = getPlannedEntries(entries, planner);
             const patchContent = await requestChatCompletion(apiSettings, {
                 temperature: 0.4,
                 messages: [
@@ -290,30 +153,29 @@ export function useWorldBookAIPatch({ apiSettings, openErrorModal, showOperation
                     {
                         role: 'user',
                         content: buildWorldBookPatchUserPrompt({
-                            entries: plannedEntries,
-                            focusEntry: targetEntry,
-                            patch: validation.normalized,
-                            planner,
+                            entries: selectedEntries,
+                            patch,
+                            selectedEntryIds,
                         }),
                     },
                 ],
             });
 
             const parsedPlan = parseWorldBookPatchPlanResponse(patchContent, {
-                validation,
-                targetEntry,
+                validation: { normalized: patch },
+                targetEntry: focusEntry,
             });
             const planValidation = validatePatchPlan(parsedPlan, {
                 entries,
-                focusEntryId: validation.normalized.entryId,
-                allowRelatedEntries: validation.normalized.allowRelatedEntries,
-                allowedEntryIds: planner.selectedEntryIds,
+                focusEntryId: patch.entryId,
+                allowRelatedEntries: true,
+                allowedEntryIds: selectedEntryIds,
             });
             if (!planValidation.ok) {
                 throw new Error(planValidation.errors.map(item => item.message).join('\n'));
             }
 
-            patchPreview.value = buildPatchPreviewPayload(entries, planValidation, planner);
+            patchPreview.value = buildPatchPreviewPayload(entries, planValidation, selectedEntryIds);
 
             if (!patchPreview.value.changed) {
                 showOperationNotice?.({
@@ -333,7 +195,7 @@ export function useWorldBookAIPatch({ apiSettings, openErrorModal, showOperation
                 showOperationNotice?.({
                     type: 'success',
                     title: '改写预览已生成',
-                    message: `基于 ${planner.selectedEntryIds.length} 个已确认条目，生成 ${patchPreview.value.operationCount} 个 patch 操作。`,
+                    message: `已在 ${selectedEntryIds.length} 个勾选条目范围内生成 ${patchPreview.value.operationCount} 个 patch 操作。`,
                     duration: 3800,
                 });
             }
@@ -452,13 +314,9 @@ export function useWorldBookAIPatch({ apiSettings, openErrorModal, showOperation
 
     return {
         isPatching,
-        plannerPreview,
         patchPreview,
-        clearPlannerPreview,
         clearPatchPreview,
-        generatePlannerPreview,
         generatePatchPreview,
         applyPatchPreviewToEditableData,
-        getConfirmedPlanner,
     };
 }

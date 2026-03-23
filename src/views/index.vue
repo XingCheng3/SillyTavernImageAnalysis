@@ -258,11 +258,9 @@
             :show="showWorldBookAIPatchModal"
             :isGenerating="isWorldBookAIPatching"
             :form="worldBookAIPatchForm"
-            :plannerPreview="worldBookAIPatchPlannerPreview"
             :preview="worldBookAIPatchPreview"
             :entries="editableData?.book_entries || []"
             @close="closeWorldBookAIPatchModal"
-            @generate-planner="handleGenerateWorldBookAIPatchPlannerPreview"
             @generate="handleGenerateWorldBookAIPatchPreview"
             @apply="handleApplyWorldBookAIPatch"
         />
@@ -456,13 +454,13 @@ const worldBookAIGenerateForm = reactive({
 const showWorldBookAIPatchModal = ref(false);
 const worldBookAIPatchForm = reactive({
     entryId: '',
-    scope: 'paragraph',
+    selectedEntryIds: [],
+    scope: 'entry',
     mode: 'rewrite',
     field: 'content',
     paragraphIndex: 0,
     instruction: '',
     keepStyle: true,
-    allowRelatedEntries: false,
     confirmReviewedDiff: false,
 });
 
@@ -509,41 +507,37 @@ watch(showAdvancedBatchTranslateModal, (val) => {
 
 watch(() => editableData.value?.book_entries, (entries) => {
     const list = Array.isArray(entries) ? entries : [];
-    if (!list.length) {
+    const allEntryIds = list.map(entry => String(entry.id)).filter(Boolean);
+
+    if (!allEntryIds.length) {
         worldBookAIPatchForm.entryId = '';
+        worldBookAIPatchForm.selectedEntryIds = [];
         return;
     }
 
-    const matched = list.some(entry => String(entry.id) === String(worldBookAIPatchForm.entryId));
-    if (!matched) {
-        worldBookAIPatchForm.entryId = String(list[0].id);
+    const currentSelected = Array.isArray(worldBookAIPatchForm.selectedEntryIds)
+        ? worldBookAIPatchForm.selectedEntryIds.map(item => String(item))
+        : [];
+    const selectedSet = new Set(currentSelected);
+
+    const nextSelected = allEntryIds.filter(entryId => selectedSet.has(entryId));
+    worldBookAIPatchForm.selectedEntryIds = nextSelected.length ? nextSelected : [...allEntryIds];
+
+    if (!worldBookAIPatchForm.entryId || !worldBookAIPatchForm.selectedEntryIds.includes(String(worldBookAIPatchForm.entryId))) {
+        worldBookAIPatchForm.entryId = String(worldBookAIPatchForm.selectedEntryIds[0] || allEntryIds[0] || '');
     }
 }, { deep: true });
-
-watch(() => worldBookAIPatchForm.scope, (scope) => {
-    if (scope !== 'paragraph') {
-        worldBookAIPatchForm.paragraphIndex = 0;
-    }
-    if (scope !== 'field') {
-        worldBookAIPatchForm.field = 'content';
-    }
-});
 
 watch(
     () => [
         worldBookAIPatchForm.entryId,
-        worldBookAIPatchForm.scope,
-        worldBookAIPatchForm.mode,
-        worldBookAIPatchForm.field,
-        worldBookAIPatchForm.paragraphIndex,
+        JSON.stringify(worldBookAIPatchForm.selectedEntryIds || []),
         worldBookAIPatchForm.instruction,
         worldBookAIPatchForm.keepStyle,
-        worldBookAIPatchForm.allowRelatedEntries,
     ],
     () => {
-        if (worldBookAIPatchPlannerPreview.value || worldBookAIPatchPreview.value) {
+        if (worldBookAIPatchPreview.value) {
             worldBookAIPatchForm.confirmReviewedDiff = false;
-            clearWorldBookAIPatchPlannerPreview();
             clearWorldBookAIPatchPreview();
         }
     },
@@ -650,14 +644,10 @@ const {
 
 const {
     isPatching: isWorldBookAIPatching,
-    plannerPreview: worldBookAIPatchPlannerPreview,
     patchPreview: worldBookAIPatchPreview,
-    clearPlannerPreview: clearWorldBookAIPatchPlannerPreview,
     clearPatchPreview: clearWorldBookAIPatchPreview,
-    generatePlannerPreview: generateWorldBookAIPatchPlannerPreview,
     generatePatchPreview: generateWorldBookAIPatchPreview,
     applyPatchPreviewToEditableData,
-    getConfirmedPlanner: getConfirmedWorldBookAIPatchPlanner,
 } = useWorldBookAIPatch({
     apiSettings,
     openErrorModal,
@@ -1187,13 +1177,18 @@ const handleGenerateWorldBookAIDraft = async () => {
         await generateWorldBookAIDraft({
             ...worldBookAIGenerateForm,
             language: 'zh-CN',
+            existingBook: {
+                name: editableData.value?.character_book?.name || '',
+                description: editableData.value?.character_book?.description || '',
+                entries: Array.isArray(editableData.value?.book_entries) ? editableData.value.book_entries : [],
+            },
         });
     } catch {
         // 错误已经在 composable 内统一提示
     }
 };
 
-const handleApplyWorldBookAIDraft = () => {
+const handleApplyWorldBookAIDraft = (payload = {}) => {
     if (!worldBookAIDraft.value) {
         showOperationNotice({
             type: 'warning',
@@ -1204,12 +1199,27 @@ const handleApplyWorldBookAIDraft = () => {
         return;
     }
 
+    const selectedEntryIds = Array.isArray(payload?.selectedEntryIds)
+        ? payload.selectedEntryIds.map(item => String(item)).filter(Boolean)
+        : [];
+
+    if (!selectedEntryIds.length) {
+        showOperationNotice({
+            type: 'warning',
+            title: '请先勾选要应用的条目',
+            message: '至少保留一个草稿条目后再应用。',
+            duration: 3200,
+        });
+        return;
+    }
+
     try {
         pushSnapshot(worldBookAIGenerateForm.replaceExisting ? 'AI重写世界书' : 'AI追加世界书');
 
         const result = applyDraftToEditableData(editableData.value, worldBookAIDraft.value, {
             replaceExisting: worldBookAIGenerateForm.replaceExisting,
             applyOpeningsToGreetings: worldBookAIGenerateForm.applyOpeningsToGreetings,
+            selectedDraftEntryIds: selectedEntryIds,
         });
 
         selectedBookEntries.value = new Array(editableData.value.book_entries.length).fill(false);
@@ -1251,12 +1261,21 @@ const openWorldBookAIPatchModal = () => {
         return;
     }
 
-    if (!worldBookAIPatchForm.entryId) {
-        worldBookAIPatchForm.entryId = String(entries[0].id);
+    const allEntryIds = entries.map(entry => String(entry.id)).filter(Boolean);
+    const currentSelected = Array.isArray(worldBookAIPatchForm.selectedEntryIds)
+        ? worldBookAIPatchForm.selectedEntryIds.map(item => String(item))
+        : [];
+
+    worldBookAIPatchForm.selectedEntryIds = currentSelected.length
+        ? allEntryIds.filter(entryId => currentSelected.includes(entryId))
+        : [...allEntryIds];
+
+    if (!worldBookAIPatchForm.selectedEntryIds.length) {
+        worldBookAIPatchForm.selectedEntryIds = [...allEntryIds];
     }
 
+    worldBookAIPatchForm.entryId = String(worldBookAIPatchForm.selectedEntryIds[0] || allEntryIds[0] || '');
     worldBookAIPatchForm.confirmReviewedDiff = false;
-    clearWorldBookAIPatchPlannerPreview();
     clearWorldBookAIPatchPreview();
     showWorldBookAIPatchModal.value = true;
 };
@@ -1264,24 +1283,7 @@ const openWorldBookAIPatchModal = () => {
 const closeWorldBookAIPatchModal = () => {
     showWorldBookAIPatchModal.value = false;
     worldBookAIPatchForm.confirmReviewedDiff = false;
-    clearWorldBookAIPatchPlannerPreview();
     clearWorldBookAIPatchPreview();
-};
-
-const handleGenerateWorldBookAIPatchPlannerPreview = async () => {
-    if (!checkAndPromptApiConfig()) {
-        return;
-    }
-
-    try {
-        worldBookAIPatchForm.confirmReviewedDiff = false;
-        await generateWorldBookAIPatchPlannerPreview({
-            editableData: editableData.value,
-            patchForm: worldBookAIPatchForm,
-        });
-    } catch {
-        // 错误已经在 composable 内统一提示
-    }
 };
 
 const handleGenerateWorldBookAIPatchPreview = async () => {
@@ -1291,14 +1293,25 @@ const handleGenerateWorldBookAIPatchPreview = async () => {
 
     try {
         worldBookAIPatchForm.confirmReviewedDiff = false;
-        const confirmedPlanner = getConfirmedWorldBookAIPatchPlanner(
-            worldBookAIPatchPlannerPreview.value,
-            worldBookAIPatchForm.entryId,
-        );
+        const selectedEntryIds = Array.isArray(worldBookAIPatchForm.selectedEntryIds)
+            ? worldBookAIPatchForm.selectedEntryIds.map(item => String(item))
+            : [];
+
+        if (!selectedEntryIds.length) {
+            showOperationNotice({
+                type: 'warning',
+                title: '请先勾选目标条目',
+                message: '至少勾选一个允许改写的条目。',
+                duration: 3200,
+            });
+            return;
+        }
+
+        worldBookAIPatchForm.entryId = String(selectedEntryIds[0]);
+
         await generateWorldBookAIPatchPreview({
             editableData: editableData.value,
             patchForm: worldBookAIPatchForm,
-            confirmedPlanner,
         });
     } catch {
         // 错误已经在 composable 内统一提示

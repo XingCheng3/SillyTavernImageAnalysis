@@ -10,82 +10,52 @@
                 <div class="section-card tips-card">
                     <h3>改写流程</h3>
                     <ol>
-                        <li>选择条目与改写范围（条目 / 段落 / 字段）</li>
+                        <li>勾选本次允许 AI 修改的条目（可多选，默认全选）</li>
                         <li>输入改写指令，点击“生成改写预览”</li>
-                        <li>确认前后差异后再应用（应用前建议保留快照）</li>
+                        <li>按条目/按 operation 复核差异后再应用</li>
                     </ol>
                 </div>
 
                 <div class="section-card">
                     <h3>改写设置</h3>
-                    <div class="form-grid">
-                        <label class="field full">
-                            <span>目标条目</span>
-                            <select v-model="form.entryId" class="editable-input">
-                                <option v-for="(entry, index) in entries" :key="entry.id ?? index" :value="String(entry.id)">
-                                    {{ index + 1 }}. {{ entry.name || entry.comment || `条目 ${index + 1}` }}（id: {{ entry.id }}）
-                                </option>
-                            </select>
-                        </label>
 
-                        <label class="field">
-                            <span>改写范围</span>
-                            <select v-model="form.scope" class="editable-input">
-                                <option value="entry">整条内容</option>
-                                <option value="paragraph">指定段落</option>
-                                <option value="field">指定字段</option>
-                            </select>
-                        </label>
-
-                        <label class="field">
-                            <span>改写模式</span>
-                            <select v-model="form.mode" class="editable-input">
-                                <option value="rewrite">重写</option>
-                                <option value="replace">替换</option>
-                                <option value="append">追加</option>
-                                <option value="prepend">前置追加</option>
-                            </select>
-                        </label>
-
-                        <label class="field" v-if="form.scope === 'paragraph'">
-                            <span>段落索引（从 0 开始）</span>
-                            <input v-model.number="form.paragraphIndex" type="number" min="0" class="editable-input" />
-                        </label>
-
-                        <div class="field full paragraph-picker" v-if="form.scope === 'paragraph'">
-                            <span>段落候选（点击快速选择）</span>
-                            <div class="paragraph-list" v-if="selectedEntryParagraphs.length">
-                                <button
-                                    v-for="(paragraph, idx) in selectedEntryParagraphs"
-                                    :key="idx"
-                                    type="button"
-                                    class="paragraph-chip"
-                                    :class="{ active: Number(form.paragraphIndex) === idx }"
-                                    @click="form.paragraphIndex = idx"
-                                >
-                                    <strong>#{{ idx }}</strong>
-                                    <span>{{ paragraph.slice(0, 56) }}{{ paragraph.length > 56 ? '…' : '' }}</span>
-                                </button>
-                            </div>
-                            <p v-else class="paragraph-empty">当前条目没有可识别段落，请先补充内容再改写。</p>
+                    <div class="entry-select-head">
+                        <p>可修改条目（{{ selectedEntryCount }} / {{ entries.length }}）</p>
+                        <div class="entry-select-actions" v-if="entries.length">
+                            <button type="button" class="small-button" @click="selectAllEntries">全选</button>
+                            <button type="button" class="small-button" @click="clearSelectedEntries">清空</button>
                         </div>
+                    </div>
 
-                        <label class="field" v-if="form.scope === 'field'">
-                            <span>字段</span>
-                            <select v-model="form.field" class="editable-input">
-                                <option value="content">content（正文）</option>
-                                <option value="comment">comment（标题）</option>
-                                <option value="name">name（名称）</option>
-                                <option value="keysText">keysText（关键词）</option>
-                            </select>
+                    <div class="entry-select-list" v-if="entries.length">
+                        <label
+                            v-for="item in entrySelectionList"
+                            :key="item.entryId"
+                            class="entry-select-item"
+                        >
+                            <input
+                                type="checkbox"
+                                v-model="form.selectedEntryIds"
+                                :value="item.entryId"
+                            />
+                            <div class="entry-select-body">
+                                <div class="entry-select-title">
+                                    <strong>{{ item.title }}</strong>
+                                    <span>ID: {{ item.entryId }}</span>
+                                </div>
+                                <p>{{ item.excerpt || '（该条目内容为空）' }}</p>
+                            </div>
                         </label>
+                    </div>
+                    <p v-else class="entry-select-empty">当前没有可改写条目，请先新增条目或先执行 AI 代写。</p>
 
+                    <div class="form-grid">
                         <label class="field full">
                             <span>改写指令（必填）</span>
                             <textarea
                                 v-model="form.instruction"
                                 class="editable-textarea"
-                                placeholder="例如：保持设定不变，把这段改成更有压迫感的战前动员语气，并补充关键势力关系。"
+                                placeholder="例如：统一把政治势力描述改为更写实、更克制；保留原设定结论，不要改世界观事实。"
                             ></textarea>
                         </label>
                     </div>
@@ -95,37 +65,6 @@
                             <input type="checkbox" v-model="form.keepStyle" />
                             <span>尽量保留原文风格</span>
                         </label>
-                        <label class="replace-switch">
-                            <input type="checkbox" v-model="form.allowRelatedEntries" />
-                            <span>允许联动修改相关条目（实验中）</span>
-                        </label>
-                    </div>
-                </div>
-
-                <div v-if="plannerPreview" class="section-card preview-card">
-                    <div class="preview-head">
-                        <h3>联动规划确认</h3>
-                        <span class="count-chip">{{ selectedPlannerCount }} / {{ plannerPreview.targets?.length || 0 }} 已选</span>
-                    </div>
-                    <p class="book-meta">请先确认真正需要联动修改的条目，再生成改写预览。</p>
-                    <p v-if="plannerPreview.summary" class="preview-summary">{{ plannerPreview.summary }}</p>
-
-                    <div class="planner-actions" v-if="plannerPreview.targets?.length > 1">
-                        <button type="button" class="small-button" @click="selectAllPlannerTargets">全选</button>
-                        <button type="button" class="small-button" @click="selectOnlyFocusPlannerTarget">仅保留目标条目</button>
-                    </div>
-
-                    <div class="planner-card">
-                        <h4>条目列表</h4>
-                        <div class="planner-target-list">
-                            <label v-for="target in plannerPreview.targets" :key="target.entryId" class="planner-target-item">
-                                <input type="checkbox" v-model="target.selected" :disabled="String(target.entryId) === String(form.entryId)" />
-                                <div>
-                                    <strong>{{ target.title }}</strong>
-                                    <p>ID: {{ target.entryId }}<span v-if="target.reason"> ｜ {{ target.reason }}</span></p>
-                                </div>
-                            </label>
-                        </div>
                     </div>
                 </div>
 
@@ -141,16 +80,6 @@
                         ｜失败 <strong>{{ preview.failedOperationCount ?? 0 }}</strong>
                     </p>
                     <p v-if="preview.summary" class="preview-summary">{{ preview.summary }}</p>
-
-                    <div v-if="preview.planner?.targets?.length" class="planner-card">
-                        <h4>本次采纳的联动规划</h4>
-                        <ul>
-                            <li v-for="target in preview.planner.targets" :key="target.entryId">
-                                <strong>{{ target.entryId }}</strong>
-                                <span v-if="target.reason">：{{ target.reason }}</span>
-                            </li>
-                        </ul>
-                    </div>
 
                     <div v-for="item in preview.entryPreviews" :key="`${item.entryId}-${item.field}`" class="entry-preview-card">
                         <div class="entry-preview-head">
@@ -237,28 +166,11 @@
                 </label>
                 <button class="action-button secondary" @click="$emit('close')">取消</button>
                 <button
-                    v-if="form.allowRelatedEntries && !plannerPreview"
-                    class="action-button"
-                    @click="$emit('generate-planner')"
-                    :disabled="isGenerating || !form.instruction?.trim() || !form.entryId"
-                >
-                    {{ isGenerating ? '规划中...' : '生成联动规划' }}
-                </button>
-                <button
-                    v-else-if="form.allowRelatedEntries"
                     class="action-button"
                     @click="$emit('generate')"
-                    :disabled="isGenerating || !form.instruction?.trim() || !form.entryId || selectedPlannerCount === 0"
+                    :disabled="isGenerating || !form.instruction?.trim() || selectedEntryCount === 0"
                 >
-                    {{ isGenerating ? '生成中...' : (preview ? '重新生成改写预览' : '基于规划生成改写预览') }}
-                </button>
-                <button
-                    v-else
-                    class="action-button"
-                    @click="$emit('generate')"
-                    :disabled="isGenerating || !form.instruction?.trim() || !form.entryId"
-                >
-                    {{ isGenerating ? '生成中...' : '生成改写预览' }}
+                    {{ isGenerating ? '生成中...' : (preview ? '重新生成改写预览' : '生成改写预览') }}
                 </button>
                 <button class="action-button" @click="$emit('apply')" :disabled="!preview || isGenerating || !form.confirmReviewedDiff || selectedOperationCount === 0">应用改写</button>
             </div>
@@ -273,29 +185,35 @@ const props = defineProps({
     show: { type: Boolean, required: true },
     isGenerating: { type: Boolean, default: false },
     form: { type: Object, required: true },
-    plannerPreview: { type: Object, default: null },
     preview: { type: Object, default: null },
     entries: { type: Array, default: () => [] },
 });
 
-defineEmits(['close', 'generate-planner', 'generate', 'apply']);
+defineEmits(['close', 'generate', 'apply']);
 
-const selectedEntryParagraphs = computed(() => {
-    const target = String(props.form?.entryId || '');
-    if (!target) return [];
-
-    const entry = (props.entries || []).find(item => String(item?.id) === target);
-    if (!entry) return [];
-
-    return String(entry.content || '')
-        .split(/\n{2,}/)
-        .map(v => v.trim())
-        .filter(Boolean);
+const entrySelectionList = computed(() => {
+    return (props.entries || []).map((entry, index) => {
+        const content = String(entry?.content || '').replace(/\s+/g, ' ').trim();
+        return {
+            entryId: String(entry?.id ?? ''),
+            title: entry?.name || entry?.comment || `条目 ${index + 1}`,
+            excerpt: content.slice(0, 120) + (content.length > 120 ? '…' : ''),
+        };
+    });
 });
 
-const selectedPlannerCount = computed(() => {
-    return (props.plannerPreview?.targets || []).filter(item => item.selected).length;
+const selectedEntryCount = computed(() => {
+    const selected = Array.isArray(props.form?.selectedEntryIds) ? props.form.selectedEntryIds : [];
+    return selected.length;
 });
+
+const selectAllEntries = () => {
+    props.form.selectedEntryIds = (props.entries || []).map(entry => String(entry?.id ?? '')).filter(Boolean);
+};
+
+const clearSelectedEntries = () => {
+    props.form.selectedEntryIds = [];
+};
 
 const countSelectedOperations = (item = {}) => {
     return (item.operationItems || []).filter(op => op.selected).length;
@@ -346,19 +264,6 @@ const formatOperationBrief = (op = {}) => {
     const snippet = String(op.searchText).replace(/\s+/g, ' ').trim();
     return `定位片段：${snippet.slice(0, 60)}${snippet.length > 60 ? '…' : ''}`;
 };
-
-const selectAllPlannerTargets = () => {
-    (props.plannerPreview?.targets || []).forEach((item) => {
-        item.selected = true;
-    });
-};
-
-const selectOnlyFocusPlannerTarget = () => {
-    const focusId = String(props.form?.entryId || '');
-    (props.plannerPreview?.targets || []).forEach((item) => {
-        item.selected = String(item.entryId) === focusId;
-    });
-};
 </script>
 
 <style scoped>
@@ -386,10 +291,90 @@ const selectOnlyFocusPlannerTarget = () => {
     line-height: 1.8;
 }
 
+.entry-select-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    margin-bottom: 10px;
+}
+
+.entry-select-head p {
+    margin: 0;
+    color: #57534e;
+    font-size: 13px;
+    font-weight: 700;
+}
+
+.entry-select-actions {
+    display: inline-flex;
+    gap: 8px;
+}
+
+.entry-select-list {
+    display: grid;
+    gap: 8px;
+    max-height: 240px;
+    overflow: auto;
+    border: 1px solid #e7e5e4;
+    border-radius: 12px;
+    padding: 10px;
+    background: #fafaf9;
+}
+
+.entry-select-item {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    border: 1px solid #e7e5e4;
+    border-radius: 10px;
+    padding: 8px 10px;
+    background: #fff;
+}
+
+.entry-select-item input {
+    margin-top: 4px;
+}
+
+.entry-select-body {
+    min-width: 0;
+}
+
+.entry-select-title {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.entry-select-title strong {
+    font-size: 13px;
+    color: #292524;
+}
+
+.entry-select-title span {
+    font-size: 11px;
+    color: #78716c;
+}
+
+.entry-select-body p {
+    margin: 4px 0 0;
+    color: #78716c;
+    font-size: 12px;
+    line-height: 1.5;
+}
+
+.entry-select-empty {
+    margin: 0;
+    font-size: 12px;
+    color: #a8a29e;
+}
+
 .form-grid {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 12px;
+    margin-top: 12px;
 }
 
 .field {
@@ -406,46 +391,6 @@ const selectOnlyFocusPlannerTarget = () => {
 
 .field.full {
     grid-column: 1 / -1;
-}
-
-.paragraph-list {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 8px;
-}
-
-.paragraph-chip {
-    border: 1px solid #dfdbd3;
-    border-radius: 10px;
-    padding: 8px 10px;
-    background: #fafaf9;
-    text-align: left;
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-    color: #44403c;
-    cursor: pointer;
-}
-
-.paragraph-chip strong {
-    font-size: 12px;
-}
-
-.paragraph-chip span {
-    font-size: 12px;
-    color: #78716c;
-    line-height: 1.4;
-}
-
-.paragraph-chip.active {
-    border-color: #93c5fd;
-    background: #eff6ff;
-}
-
-.paragraph-empty {
-    margin: 0;
-    font-size: 12px;
-    color: #a8a29e;
 }
 
 .switch-stack {
@@ -495,7 +440,6 @@ const selectOnlyFocusPlannerTarget = () => {
     line-height: 1.6;
 }
 
-.planner-card,
 .entry-preview-card {
     border: 1px solid #e7e5e4;
     border-radius: 14px;
@@ -504,56 +448,22 @@ const selectOnlyFocusPlannerTarget = () => {
     margin-top: 14px;
 }
 
-.planner-card h4 {
-    margin: 0 0 10px;
-    font-size: 14px;
-    color: #292524;
-}
-
-.planner-card ul {
-    margin: 0;
-    padding-left: 18px;
-    color: #57534e;
-    line-height: 1.7;
-}
-
-.planner-actions {
-    display: flex;
-    gap: 8px;
-    flex-wrap: wrap;
-    margin-bottom: 10px;
-}
-
-.planner-target-list {
-    display: grid;
-    gap: 10px;
-}
-
-.planner-target-item,
-.entry-preview-toggle {
-    display: flex;
-    align-items: flex-start;
-    gap: 10px;
-}
-
-.planner-target-item input,
-.entry-preview-toggle input {
-    margin-top: 3px;
-}
-
-.planner-target-item p,
-.entry-preview-toggle p {
-    margin: 4px 0 0;
-    color: #78716c;
-    font-size: 12px;
-}
-
 .entry-preview-head {
     display: flex;
     align-items: flex-start;
     justify-content: space-between;
     gap: 12px;
     margin-bottom: 12px;
+}
+
+.entry-preview-toggle {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+}
+
+.entry-preview-toggle input {
+    margin-top: 3px;
 }
 
 .entry-preview-head p {
@@ -757,9 +667,13 @@ const selectOnlyFocusPlannerTarget = () => {
 
 @media (max-width: 900px) {
     .form-grid,
-    .diff-grid,
-    .paragraph-list {
+    .diff-grid {
         grid-template-columns: 1fr;
+    }
+
+    .entry-select-head {
+        flex-direction: column;
+        align-items: flex-start;
     }
 }
 </style>

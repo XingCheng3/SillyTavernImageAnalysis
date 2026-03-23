@@ -328,6 +328,28 @@ function testBusinessFlowAppendAndDisableGreetingSync() {
     assert.equal(editableData.alternate_greetings.length, 2);
 }
 
+function testBusinessFlowApplySelectedDraftEntriesOnly() {
+    const draft = validateCharacterDraft(buildValidDraft()).normalized;
+    const { characterData, worldbookDraft } = buildCharacterTemplateFromDraft(draft);
+    const editableData = buildEditableCharacterData(characterData);
+
+    const applyResult = applyWorldBookDraftToEditableData(editableData, worldbookDraft, {
+        replaceExisting: true,
+        applyOpeningsToGreetings: true,
+        selectedDraftEntryIds: ['E02'],
+    });
+
+    assert.equal(applyResult.addedCount, 1);
+    assert.equal(applyResult.totalCount, 1);
+    assert.equal(editableData.book_entries.length, 1);
+    assert.equal(editableData.book_entries[0].keysText.includes('学院'), true);
+    assert.equal(
+        editableData.character_book.extensions.ai_opening_branches[0].enableEntryIds.length,
+        0,
+        '未应用的条目不应保留在 opening 引用中',
+    );
+}
+
 function testRetryFailureHelpers() {
     const errors = [
         { code: 'ENTRY_CONTENT_REQUIRED', path: 'worldbook.entries[1].content', message: '条目内容不能为空' },
@@ -389,6 +411,9 @@ async function runAllTests() {
 
     testBusinessFlowAppendAndDisableGreetingSync();
     console.log('✓ 追加应用与开场同步开关业务行为正确');
+
+    testBusinessFlowApplySelectedDraftEntriesOnly();
+    console.log('✓ 草稿预览支持按勾选条目局部应用');
 
     testRetryFailureHelpers();
     console.log('✓ 补全失败聚合与恢复判断正确');

@@ -39,10 +39,19 @@ function buildValidationSummary(result) {
     };
 }
 
-function normalizeOpeningBranches(openings = [], idMap = new Map()) {
+function normalizeOpeningBranches(openings = [], idMap = new Map(), allowedSourceEntryIds = null) {
+    const allowedSet = allowedSourceEntryIds instanceof Set ? allowedSourceEntryIds : null;
+
     return (Array.isArray(openings) ? openings : []).map((opening, index) => {
-        const enableEntryIds = (opening.enableEntryIds || []).map((id) => idMap.get(String(id)) || String(id));
-        const disableEntryIds = (opening.disableEntryIds || []).map((id) => idMap.get(String(id)) || String(id));
+        const enableEntryIds = (opening.enableEntryIds || [])
+            .map((id) => String(id))
+            .filter((id) => !allowedSet || allowedSet.has(id))
+            .map((id) => idMap.get(id) || id);
+
+        const disableEntryIds = (opening.disableEntryIds || [])
+            .map((id) => String(id))
+            .filter((id) => !allowedSet || allowedSet.has(id))
+            .map((id) => idMap.get(id) || id);
 
         return {
             id: String(opening.id || `OP${index + 1}`),
@@ -70,12 +79,26 @@ export function applyWorldBookDraftToEditableData(editableData, draft, options =
     }
 
     const replaceExisting = options.replaceExisting === true;
+    const selectedDraftEntryIds = Array.isArray(options.selectedDraftEntryIds)
+        ? Array.from(new Set(options.selectedDraftEntryIds.map(item => String(item)).filter(Boolean)))
+        : [];
+
+    const normalizedEntries = Array.isArray(validation.normalized.entries) ? validation.normalized.entries : [];
+    const selectedEntrySet = selectedDraftEntryIds.length ? new Set(selectedDraftEntryIds) : null;
+    const entriesToApply = selectedEntrySet
+        ? normalizedEntries.filter(entry => selectedEntrySet.has(String(entry.id)))
+        : normalizedEntries;
+
+    if (!entriesToApply.length) {
+        throw new Error('草稿中没有可应用的条目（请至少勾选 1 条）。');
+    }
+
     const currentEntries = Array.isArray(editableData.book_entries) ? editableData.book_entries : [];
     const startIndex = replaceExisting ? 0 : currentEntries.length;
     const startId = replaceExisting ? 0 : getNextStartId(currentEntries);
     const startOrder = replaceExisting ? 0 : getNextStartOrder(currentEntries);
 
-    const mappedEntries = mapDraftEntriesToEditableEntries(validation.normalized.entries, {
+    const mappedEntries = mapDraftEntriesToEditableEntries(entriesToApply, {
         startIndex,
         startId,
         startOrder,
@@ -89,11 +112,15 @@ export function applyWorldBookDraftToEditableData(editableData, draft, options =
         : [...currentEntries, ...mappedEntries];
 
     const idMap = new Map();
-    validation.normalized.entries.forEach((entry, index) => {
+    entriesToApply.forEach((entry, index) => {
         idMap.set(String(entry.id), String(mappedEntries[index]?.id));
     });
 
-    const openingBranches = normalizeOpeningBranches(validation.normalized.openings, idMap);
+    const openingBranches = normalizeOpeningBranches(
+        validation.normalized.openings,
+        idMap,
+        selectedEntrySet,
+    );
 
     if (!editableData.character_book.extensions || typeof editableData.character_book.extensions !== 'object') {
         editableData.character_book.extensions = {};

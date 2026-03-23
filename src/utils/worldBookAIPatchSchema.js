@@ -49,6 +49,12 @@ function makeEntryTitle(entry = {}, index = 0) {
     return entry.name || entry.comment || `条目 ${index + 1}`;
 }
 
+function normalizeEntryIdList(raw = []) {
+    return Array.from(new Set((Array.isArray(raw) ? raw : [raw])
+        .map(item => normalizeString(item))
+        .filter(Boolean)));
+}
+
 export function getEntryParagraphs(entry = {}) {
     return splitParagraphs(entry.content || '');
 }
@@ -63,9 +69,12 @@ export function findWorldBookEntryIndex(entries = [], entryId = '') {
 export function createPatchInstruction(raw = {}) {
     const scope = raw.scope || WORLD_BOOK_PATCH_SCOPE.ENTRY;
     const mode = raw.mode || WORLD_BOOK_PATCH_MODE.REWRITE;
+    const selectedEntryIds = normalizeEntryIdList(raw.selectedEntryIds);
+    const focusEntryId = normalizeString(raw.entryId || selectedEntryIds[0] || '');
 
     return {
-        entryId: normalizeString(raw.entryId),
+        entryId: focusEntryId,
+        selectedEntryIds: selectedEntryIds.length ? selectedEntryIds : (focusEntryId ? [focusEntryId] : []),
         scope,
         mode,
         field: normalizeString(raw.field || 'content'),
@@ -73,7 +82,7 @@ export function createPatchInstruction(raw = {}) {
         instruction: normalizeString(raw.instruction),
         replacement: normalizeMultilineText(raw.replacement),
         keepStyle: raw.keepStyle !== false,
-        allowRelatedEntries: raw.allowRelatedEntries === true,
+        allowRelatedEntries: raw.allowRelatedEntries !== false,
     };
 }
 
@@ -81,12 +90,24 @@ export function validatePatchInstruction(raw = {}) {
     const instruction = createPatchInstruction(raw);
     const errors = [];
 
+    if (!instruction.selectedEntryIds.length) {
+        errors.push({
+            code: 'SELECTED_ENTRY_IDS_REQUIRED',
+            message: '请至少勾选一个要改写的条目。',
+            path: 'selectedEntryIds',
+        });
+    }
+
     if (!instruction.entryId) {
         errors.push({
             code: 'ENTRY_ID_REQUIRED',
-            message: '局部改写必须指定 entryId。',
+            message: '局部改写必须指定一个主条目。',
             path: 'entryId',
         });
+    }
+
+    if (instruction.entryId && !instruction.selectedEntryIds.includes(instruction.entryId)) {
+        instruction.selectedEntryIds = Array.from(new Set([instruction.entryId, ...instruction.selectedEntryIds]));
     }
 
     if (!Object.values(WORLD_BOOK_PATCH_SCOPE).includes(instruction.scope)) {
