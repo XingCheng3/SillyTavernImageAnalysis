@@ -1331,11 +1331,17 @@ const handleApplyWorldBookAIPatch = () => {
 
         const result = applyPatchPreviewToEditableData(editableData.value, worldBookAIPatchPreview.value);
 
+        const hasFailedOps = result.failedOperationCount > 0;
+
         showOperationNotice({
-            type: result.changedCount > 0 ? 'success' : 'warning',
-            title: result.changedCount > 0 ? '已应用 AI 局部改写' : '已应用改写（内容无变化）',
-            message: `涉及 ${result.affectedEntryCount} 个条目，执行 ${result.operationCount} 个 patch 操作。`,
-            duration: 4200,
+            type: hasFailedOps ? 'warning' : (result.changedCount > 0 ? 'success' : 'warning'),
+            title: hasFailedOps
+                ? '已部分应用 AI 局部改写'
+                : (result.changedCount > 0 ? '已应用 AI 局部改写' : '已应用改写（内容无变化）'),
+            message: hasFailedOps
+                ? `涉及 ${result.affectedEntryCount} 个条目，尝试 ${result.operationCount} 个操作（成功 ${result.successOperationCount}，失败 ${result.failedOperationCount}）。失败操作请重新生成后重试。`
+                : `涉及 ${result.affectedEntryCount} 个条目，执行 ${result.operationCount} 个 patch 操作。`,
+            duration: hasFailedOps ? 6200 : 4200,
         });
 
         closeWorldBookAIPatchModal();

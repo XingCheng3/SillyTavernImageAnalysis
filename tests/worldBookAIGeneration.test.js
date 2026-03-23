@@ -19,6 +19,7 @@ import {
     WORLD_BOOK_PATCH_SCOPE,
     applyLocalPatchToEntry,
     applyPatchOperationsToEntry,
+    applyPatchOperationsToEntryWithReport,
     buildPatchPlanPreview,
     findWorldBookEntryIndex,
     getPatchTargetText,
@@ -28,6 +29,7 @@ import {
 import {
     TEXT_PATCH_ACTION,
     applyTextPatchOperation,
+    applyTextPatchOperationsWithReport,
 } from '../src/utils/structuredTextPatch.js';
 import { buildLineDiff, summarizeLineDiff } from '../src/utils/textDiffPreview.js';
 
@@ -259,6 +261,67 @@ function testStructuredTextPatchRequiresDisambiguation() {
     assert.equal(patched, '关键词A，关键词B，关键词A');
 }
 
+function testStructuredTextPatchReportIsolation() {
+    const report = applyTextPatchOperationsWithReport('王城守卫极严。', [
+        {
+            opId: 'ok_1',
+            action: TEXT_PATCH_ACTION.REPLACE_TEXT,
+            searchText: '守卫极严',
+            replacement: '守卫严密但可申请通行',
+        },
+        {
+            opId: 'bad_2',
+            action: TEXT_PATCH_ACTION.REPLACE_TEXT,
+            searchText: '不存在的片段',
+            replacement: '不会生效',
+        },
+        {
+            opId: 'ok_3',
+            action: TEXT_PATCH_ACTION.APPEND_AFTER_TEXT,
+            searchText: '可申请通行',
+            replacement: '，需持军令。',
+        },
+    ], { continueOnError: true });
+
+    assert.equal(report.ok, false);
+    assert.equal(report.successCount, 2);
+    assert.equal(report.failedCount, 1);
+    assert.equal(report.afterText.includes('需持军令'), true);
+}
+
+function testPatchPlanPreviewOperationFailureIsolation() {
+    const entries = [
+        {
+            id: 11,
+            name: '帝国军纪',
+            content: '帝国军纪极严。\n\n任何越级行为都会被立即处决。',
+        },
+    ];
+
+    const preview = buildPatchPlanPreview(entries, [
+        {
+            opId: 'op_ok',
+            entryId: '11',
+            field: 'content',
+            action: WORLD_BOOK_PATCH_ACTION.REPLACE_TEXT,
+            searchText: '立即处决',
+            replacement: '军法审议后判罚',
+        },
+        {
+            opId: 'op_bad',
+            entryId: '11',
+            field: 'content',
+            action: WORLD_BOOK_PATCH_ACTION.REPLACE_TEXT,
+            searchText: '不会命中的片段',
+            replacement: '无效',
+        },
+    ]);
+
+    assert.equal(preview.failedOperationCount, 1);
+    assert.equal(preview.successOperationCount, 1);
+    assert.equal(preview.entryPreviews[0].afterText.includes('军法审议后判罚'), true);
+}
+
 function testPatchPlanValidationAndPreview() {
     const entries = [
         {
@@ -341,6 +404,37 @@ function testPatchOperationsApplyToEntry() {
     assert.equal(nextEntry.content.includes('军法审议后判罚'), true);
 }
 
+function testPatchOperationsApplyWithReport() {
+    const entry = {
+        id: 21,
+        content: 'A 段。\n\nB 段。',
+    };
+
+    const report = applyPatchOperationsToEntryWithReport(entry, [
+        {
+            opId: 'op_ok',
+            entryId: '21',
+            field: 'content',
+            action: WORLD_BOOK_PATCH_ACTION.REPLACE_TEXT,
+            searchText: 'B 段',
+            replacement: 'B 段（已修订）',
+        },
+        {
+            opId: 'op_bad',
+            entryId: '21',
+            field: 'content',
+            action: WORLD_BOOK_PATCH_ACTION.REPLACE_TEXT,
+            searchText: '不存在片段',
+            replacement: '不会应用',
+        },
+    ], { continueOnError: true });
+
+    assert.equal(report.ok, false);
+    assert.equal(report.successCount, 1);
+    assert.equal(report.failedCount, 1);
+    assert.equal(report.entry.content.includes('B 段（已修订）'), true);
+}
+
 function testLineDiffPreview() {
     const diff = buildLineDiff('第一行\n第二行\n第三行', '第一行\n第二行(改)\n第三行\n第四行');
     const summary = summarizeLineDiff(diff);
@@ -377,11 +471,20 @@ function runAllTests() {
     testStructuredTextPatchRequiresDisambiguation();
     console.log('✓ 最小文本 patch 歧义保护正确');
 
+    testStructuredTextPatchReportIsolation();
+    console.log('✓ 文本 patch 支持按 operation 隔离失败');
+
+    testPatchPlanPreviewOperationFailureIsolation();
+    console.log('✓ patch 预览可隔离失败 operation 并保留成功结果');
+
     testPatchPlanValidationAndPreview();
     console.log('✓ 多条目 patch plan 校验与预览正确');
 
     testPatchOperationsApplyToEntry();
     console.log('✓ 多 operation 顺序应用正确');
+
+    testPatchOperationsApplyWithReport();
+    console.log('✓ 条目应用支持部分成功 + 失败报告');
 
     testLineDiffPreview();
     console.log('✓ 行级差异预览能力正确');

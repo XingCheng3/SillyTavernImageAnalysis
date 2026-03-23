@@ -1,7 +1,7 @@
 import {
     TEXT_PATCH_ACTION,
     applyTextPatchOperation,
-    applyTextPatchOperations,
+    applyTextPatchOperationsWithReport,
     buildTextPatchPreview,
     createTextPatchOperation,
     validateTextPatchOperation,
@@ -303,6 +303,59 @@ export function applyPatchOperationsToEntry(entry = {}, operations = []) {
     return (operations || []).reduce((current, operation) => applyPatchOperationToEntry(current, operation), { ...entry });
 }
 
+export function applyPatchOperationsToEntryWithReport(entry = {}, operations = [], options = {}) {
+    const continueOnError = options?.continueOnError !== false;
+    const sourceEntry = { ...entry };
+    const groupedOperations = groupPatchOperationsByEntryField(operations);
+    const fieldReports = [];
+    let nextEntry = { ...sourceEntry };
+
+    groupedOperations.forEach((group) => {
+        const field = group.field || 'content';
+        const beforeText = getEntryFieldText(nextEntry, field);
+        const textReport = applyTextPatchOperationsWithReport(beforeText, group.operations, { continueOnError });
+
+        if (textReport.successCount > 0 || textReport.changed) {
+            nextEntry = setEntryFieldText(nextEntry, field, textReport.afterText);
+        }
+
+        fieldReports.push({
+            entryId: group.entryId,
+            field,
+            beforeText,
+            afterText: textReport.afterText,
+            changed: textReport.changed,
+            successCount: textReport.successCount,
+            failedCount: textReport.failedCount,
+            operationReports: textReport.operationReports,
+            errors: textReport.errors,
+        });
+    });
+
+    const failedOperations = fieldReports.flatMap((fieldReport) =>
+        (fieldReport.operationReports || [])
+            .filter(item => !item.ok)
+            .map((item) => ({
+                entryId: fieldReport.entryId,
+                field: fieldReport.field,
+                index: item.index,
+                opId: item.operation?.opId || '',
+                message: item.error?.message || '未知 patch 错误',
+                operation: item.operation,
+            })),
+    );
+
+    return {
+        ok: failedOperations.length === 0,
+        entry: nextEntry,
+        changed: fieldReports.some(item => item.changed),
+        successCount: fieldReports.reduce((sum, item) => sum + item.successCount, 0),
+        failedCount: failedOperations.length,
+        fieldReports,
+        failedOperations,
+    };
+}
+
 export function buildPatchPlanPreview(entries = [], operations = []) {
     const groups = groupPatchOperationsByEntryField(operations);
     const entryPreviews = groups.map((group) => {
@@ -313,7 +366,7 @@ export function buildPatchPlanPreview(entries = [], operations = []) {
 
         const entry = entries[entryIndex];
         const beforeText = getEntryFieldText(entry, group.field);
-        const afterText = applyTextPatchOperations(beforeText, group.operations);
+        const textReport = applyTextPatchOperationsWithReport(beforeText, group.operations, { continueOnError: true });
 
         return {
             entryId: String(entry.id),
@@ -321,8 +374,12 @@ export function buildPatchPlanPreview(entries = [], operations = []) {
             entryTitle: makeEntryTitle(entry, entryIndex),
             field: group.field,
             beforeText,
-            afterText,
-            changed: beforeText !== afterText,
+            afterText: textReport.afterText,
+            changed: textReport.changed,
+            operationSuccessCount: textReport.successCount,
+            operationFailedCount: textReport.failedCount,
+            operationReports: textReport.operationReports,
+            operationErrors: textReport.errors,
             operations: group.operations,
         };
     }).sort((a, b) => a.entryIndex - b.entryIndex);
@@ -331,6 +388,8 @@ export function buildPatchPlanPreview(entries = [], operations = []) {
 
     return {
         operationCount: operations.length,
+        successOperationCount: entryPreviews.reduce((sum, item) => sum + (item.operationSuccessCount || 0), 0),
+        failedOperationCount: entryPreviews.reduce((sum, item) => sum + (item.operationFailedCount || 0), 0),
         affectedEntryIds,
         affectedEntryCount: affectedEntryIds.length,
         entryPreviews,

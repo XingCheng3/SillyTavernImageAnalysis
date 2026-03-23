@@ -137,6 +137,8 @@
                     <p class="book-meta">
                         涉及 <strong>{{ preview.affectedEntryCount }}</strong> 个条目
                         ｜<strong>{{ preview.operationCount }}</strong> 个 patch 操作
+                        ｜成功 <strong>{{ preview.successOperationCount ?? 0 }}</strong>
+                        ｜失败 <strong>{{ preview.failedOperationCount ?? 0 }}</strong>
                     </p>
                     <p v-if="preview.summary" class="preview-summary">{{ preview.summary }}</p>
 
@@ -153,13 +155,44 @@
                     <div v-for="item in preview.entryPreviews" :key="`${item.entryId}-${item.field}`" class="entry-preview-card">
                         <div class="entry-preview-head">
                             <label class="entry-preview-toggle">
-                                <input type="checkbox" v-model="item.selected" />
+                                <input
+                                    type="checkbox"
+                                    :checked="isEntrySelected(item)"
+                                    @change="toggleEntryOperations(item, $event.target.checked)"
+                                />
                                 <div>
                                     <strong>{{ item.entryTitle }}</strong>
-                                    <p>字段：{{ item.field }} ｜ 操作数：{{ item.operations?.length || 0 }}</p>
+                                    <p>
+                                        字段：{{ item.field }} ｜ 操作数：{{ item.operationItems?.length || item.operations?.length || 0 }}
+                                        ｜ 已选 {{ countSelectedOperations(item) }}
+                                    </p>
                                 </div>
                             </label>
                             <span class="count-chip small">{{ item.changed ? '已变更' : '无变化' }}</span>
+                        </div>
+
+                        <div class="operation-list" v-if="item.operationItems?.length">
+                            <label
+                                v-for="op in item.operationItems"
+                                :key="`${item.entryId}-${item.field}-${op.opId || op.index}`"
+                                class="operation-item"
+                                :class="{ failed: !op.ok }"
+                            >
+                                <input
+                                    type="checkbox"
+                                    v-model="op.selected"
+                                    :disabled="!op.ok"
+                                    @change="syncEntrySelection(item)"
+                                />
+                                <div class="operation-body">
+                                    <p class="operation-title">
+                                        #{{ op.index + 1 }} · {{ op.action }}
+                                        <span v-if="op.opId">（{{ op.opId }}）</span>
+                                    </p>
+                                    <p class="operation-meta">{{ formatOperationBrief(op) }}</p>
+                                    <p v-if="!op.ok" class="operation-error">失败原因：{{ op.errorMessage || '未知错误' }}</p>
+                                </div>
+                            </label>
                         </div>
 
                         <div class="diff-grid">
@@ -227,7 +260,7 @@
                 >
                     {{ isGenerating ? '生成中...' : '生成改写预览' }}
                 </button>
-                <button class="action-button" @click="$emit('apply')" :disabled="!preview || isGenerating || !form.confirmReviewedDiff || selectedPreviewCount === 0">应用改写</button>
+                <button class="action-button" @click="$emit('apply')" :disabled="!preview || isGenerating || !form.confirmReviewedDiff || selectedOperationCount === 0">应用改写</button>
             </div>
         </div>
     </div>
@@ -264,9 +297,55 @@ const selectedPlannerCount = computed(() => {
     return (props.plannerPreview?.targets || []).filter(item => item.selected).length;
 });
 
-const selectedPreviewCount = computed(() => {
-    return (props.preview?.entryPreviews || []).filter(item => item.selected !== false).length;
+const countSelectedOperations = (item = {}) => {
+    return (item.operationItems || []).filter(op => op.selected).length;
+};
+
+const isEntrySelected = (item = {}) => {
+    const operationItems = item.operationItems || [];
+    if (!operationItems.length) return item.selected !== false;
+    return operationItems.some(op => op.selected);
+};
+
+const syncEntrySelection = (item = {}) => {
+    item.selected = isEntrySelected(item);
+};
+
+const toggleEntryOperations = (item = {}, checked = false) => {
+    const operationItems = item.operationItems || [];
+    if (!operationItems.length) {
+        item.selected = checked;
+        return;
+    }
+
+    operationItems.forEach((op) => {
+        if (op.ok === false) return;
+        op.selected = checked;
+    });
+    item.selected = checked;
+};
+
+const selectedOperationCount = computed(() => {
+    return (props.preview?.entryPreviews || [])
+        .reduce((sum, item) => sum + countSelectedOperations(item), 0);
 });
+
+const formatOperationBrief = (op = {}) => {
+    if (op.action === 'replace_whole') {
+        return '整段替换。';
+    }
+
+    if (op.action === 'replace_paragraph') {
+        return `段落 #${Number.isFinite(op.paragraphIndex) ? op.paragraphIndex : '?'} 替换。`;
+    }
+
+    if (!op.searchText) {
+        return '未提供 searchText。';
+    }
+
+    const snippet = String(op.searchText).replace(/\s+/g, ' ').trim();
+    return `定位片段：${snippet.slice(0, 60)}${snippet.length > 60 ? '…' : ''}`;
+};
 
 const selectAllPlannerTargets = () => {
     (props.plannerPreview?.targets || []).forEach((item) => {
@@ -480,6 +559,54 @@ const selectOnlyFocusPlannerTarget = () => {
 .entry-preview-head p {
     margin: 4px 0 0;
     color: #78716c;
+    font-size: 12px;
+}
+
+.operation-list {
+    display: grid;
+    gap: 8px;
+    margin-bottom: 12px;
+}
+
+.operation-item {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    border: 1px solid #e7e5e4;
+    border-radius: 10px;
+    padding: 8px 10px;
+    background: #fff;
+}
+
+.operation-item.failed {
+    border-color: #fecaca;
+    background: #fff7f7;
+}
+
+.operation-item input {
+    margin-top: 4px;
+}
+
+.operation-body {
+    min-width: 0;
+}
+
+.operation-title {
+    margin: 0;
+    color: #292524;
+    font-size: 12px;
+    font-weight: 700;
+}
+
+.operation-meta {
+    margin: 4px 0 0;
+    color: #57534e;
+    font-size: 12px;
+}
+
+.operation-error {
+    margin: 4px 0 0;
+    color: #b91c1c;
     font-size: 12px;
 }
 

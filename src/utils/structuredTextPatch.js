@@ -262,16 +262,92 @@ export function applyTextPatchOperation(text = '', rawOperation = {}) {
     return source;
 }
 
+export function applyTextPatchOperationWithResult(text = '', rawOperation = {}) {
+    const beforeText = String(text ?? '').replace(/\r\n/g, '\n');
+    const normalizedOperation = createTextPatchOperation(rawOperation);
+
+    try {
+        const afterText = applyTextPatchOperation(beforeText, normalizedOperation);
+        return {
+            ok: true,
+            operation: normalizedOperation,
+            beforeText,
+            afterText,
+            changed: beforeText !== afterText,
+            error: null,
+        };
+    } catch (error) {
+        return {
+            ok: false,
+            operation: normalizedOperation,
+            beforeText,
+            afterText: beforeText,
+            changed: false,
+            error: {
+                message: error?.message || '未知 patch 错误',
+            },
+        };
+    }
+}
+
+export function applyTextPatchOperationsWithReport(text = '', operations = [], options = {}) {
+    const continueOnError = options?.continueOnError !== false;
+    const initialText = String(text ?? '').replace(/\r\n/g, '\n');
+    let currentText = initialText;
+    const operationReports = [];
+
+    for (let index = 0; index < (operations || []).length; index += 1) {
+        const operation = operations[index];
+        const result = applyTextPatchOperationWithResult(currentText, operation);
+        const report = {
+            ...result,
+            index,
+        };
+
+        if (result.ok) {
+            currentText = result.afterText;
+        }
+
+        operationReports.push(report);
+
+        if (!result.ok && !continueOnError) {
+            break;
+        }
+    }
+
+    const successCount = operationReports.filter(item => item.ok).length;
+    const failedReports = operationReports.filter(item => !item.ok);
+
+    return {
+        ok: failedReports.length === 0,
+        beforeText: initialText,
+        afterText: currentText,
+        changed: initialText !== currentText,
+        successCount,
+        failedCount: failedReports.length,
+        operationReports,
+        errors: failedReports.map(item => ({
+            index: item.index,
+            opId: item.operation?.opId || '',
+            message: item.error?.message || '未知 patch 错误',
+        })),
+    };
+}
+
 export function applyTextPatchOperations(text = '', operations = []) {
-    return (operations || []).reduce((current, operation) => applyTextPatchOperation(current, operation), String(text ?? '').replace(/\r\n/g, '\n'));
+    const report = applyTextPatchOperationsWithReport(text, operations, { continueOnError: false });
+    if (!report.ok) {
+        const firstError = report.errors[0];
+        throw new Error(firstError?.message || '文本 patch 执行失败');
+    }
+    return report.afterText;
 }
 
 export function buildTextPatchPreview(text = '', operations = []) {
-    const beforeText = String(text ?? '').replace(/\r\n/g, '\n');
-    const afterText = applyTextPatchOperations(beforeText, operations || []);
+    const report = applyTextPatchOperationsWithReport(text, operations, { continueOnError: false });
     return {
-        beforeText,
-        afterText,
-        changed: beforeText !== afterText,
+        beforeText: report.beforeText,
+        afterText: report.afterText,
+        changed: report.changed,
     };
 }

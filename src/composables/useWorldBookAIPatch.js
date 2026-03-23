@@ -1,7 +1,7 @@
 import { ref } from 'vue';
 import { normalizeKeywords } from '@/utils/worldBookAIAuthoringSpec';
 import {
-    applyPatchOperationsToEntry,
+    applyPatchOperationsToEntryWithReport,
     buildPatchPlanPreview,
     findWorldBookEntryIndex,
     getEntryFieldText,
@@ -40,11 +40,27 @@ function ensureParagraphIndexInRange(entry, patch) {
 
 function createEntryPreviewWithDiff(item) {
     const lineDiff = buildLineDiff(item.beforeText, item.afterText);
+    const operationItems = (item.operationReports || []).map((report, index) => {
+        const op = report.operation || item.operations?.[index] || {};
+        return {
+            ...op,
+            index,
+            selected: report.ok,
+            ok: report.ok,
+            errorMessage: report.error?.message || '',
+            changed: report.changed,
+        };
+    });
+
+    const selectedOperationCount = operationItems.filter(op => op.selected).length;
+
     return {
         ...item,
         lineDiff,
         diffSummary: summarizeLineDiff(lineDiff),
-        selected: true,
+        operationItems,
+        selectedOperationCount,
+        selected: selectedOperationCount > 0,
     };
 }
 
@@ -169,6 +185,8 @@ function buildPatchPreviewPayload(entries, planValidation, planner) {
         selectedEntryIds: planner?.selectedEntryIds || planValidation.normalized.selectedEntryIds,
         planner,
         operationCount: preview.operationCount,
+        successOperationCount: preview.successOperationCount,
+        failedOperationCount: preview.failedOperationCount,
         affectedEntryIds: preview.affectedEntryIds,
         affectedEntryCount: preview.affectedEntryCount,
         entryPreviews,
@@ -304,6 +322,13 @@ export function useWorldBookAIPatch({ apiSettings, openErrorModal, showOperation
                     message: '建议调整改写指令后重试。',
                     duration: 4500,
                 });
+            } else if (patchPreview.value.failedOperationCount > 0) {
+                showOperationNotice?.({
+                    type: 'warning',
+                    title: '改写预览已生成（含失败操作）',
+                    message: `共 ${patchPreview.value.operationCount} 个操作，其中 ${patchPreview.value.failedOperationCount} 个执行失败，请按需取消或重试。`,
+                    duration: 5000,
+                });
             } else {
                 showOperationNotice?.({
                     type: 'success',
@@ -332,14 +357,24 @@ export function useWorldBookAIPatch({ apiSettings, openErrorModal, showOperation
             throw new Error('没有可应用的改写预览。');
         }
 
-        const selectedPreviews = preview.entryPreviews.filter(item => item.selected !== false);
+        const selectedPreviews = preview.entryPreviews.filter((item) => {
+            const operationItems = Array.isArray(item.operationItems) ? item.operationItems : [];
+            if (!operationItems.length) {
+                return item.selected !== false;
+            }
+            return operationItems.some(op => op.selected);
+        });
         if (!selectedPreviews.length) {
-            throw new Error('请先至少勾选一个要应用的条目。');
+            throw new Error('请先至少勾选一个要应用的操作。');
         }
 
         const entries = Array.isArray(editableData?.book_entries) ? editableData.book_entries : [];
         const appliedEntries = [];
+        const failedOperations = [];
         let changedCount = 0;
+        let attemptedOperationCount = 0;
+        let successOperationCount = 0;
+        let failedOperationCount = 0;
 
         selectedPreviews.forEach((entryPreview) => {
             const targetIndex = findWorldBookEntryIndex(entries, entryPreview.entryId);
@@ -353,7 +388,19 @@ export function useWorldBookAIPatch({ apiSettings, openErrorModal, showOperation
                 throw new Error(`条目「${entryPreview.entryTitle}」的 ${entryPreview.field} 在预览后发生变化，请重新生成改写预览。`);
             }
 
-            const nextEntry = applyPatchOperationsToEntry(current, entryPreview.operations);
+            const operationItems = Array.isArray(entryPreview.operationItems) ? entryPreview.operationItems : [];
+            const selectedOperations = (operationItems.length
+                ? operationItems.filter(op => op.selected)
+                : (entryPreview.selected !== false ? (entryPreview.operations || []) : []))
+                .map(op => ({ ...op }));
+
+            if (!selectedOperations.length) {
+                return;
+            }
+
+            const report = applyPatchOperationsToEntryWithReport(current, selectedOperations, { continueOnError: true });
+            const nextEntry = { ...report.entry };
+
             if (entryPreview.field === 'keysText') {
                 const keys = normalizeKeywords(nextEntry.keysText);
                 nextEntry.keys = keys;
@@ -361,19 +408,44 @@ export function useWorldBookAIPatch({ apiSettings, openErrorModal, showOperation
             }
 
             entries.splice(targetIndex, 1, nextEntry);
+
+            const afterFieldText = getEntryFieldText(nextEntry, entryPreview.field);
+            const entryChanged = currentFieldText !== afterFieldText;
+            if (entryChanged) changedCount += 1;
+
+            attemptedOperationCount += selectedOperations.length;
+            successOperationCount += report.successCount;
+            failedOperationCount += report.failedCount;
+
+            report.failedOperations.forEach((failed) => {
+                failedOperations.push({
+                    ...failed,
+                    entryTitle: entryPreview.entryTitle,
+                });
+            });
+
             appliedEntries.push({
                 entryId: String(nextEntry.id),
                 entryTitle: nextEntry.name || nextEntry.comment || `条目 ${targetIndex + 1}`,
                 field: entryPreview.field,
-                changed: entryPreview.changed,
+                changed: entryChanged,
+                attemptedOperations: selectedOperations.length,
+                successOperations: report.successCount,
+                failedOperations: report.failedCount,
             });
-            if (entryPreview.changed) changedCount += 1;
         });
+
+        if (!attemptedOperationCount) {
+            throw new Error('请先至少勾选一个要应用的操作。');
+        }
 
         return {
             changedCount,
             affectedEntryCount: appliedEntries.length,
-            operationCount: selectedPreviews.reduce((sum, item) => sum + (item.operations?.length || 0), 0),
+            operationCount: attemptedOperationCount,
+            successOperationCount,
+            failedOperationCount,
+            failedOperations,
             entries: appliedEntries,
         };
     };
